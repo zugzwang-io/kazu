@@ -3,8 +3,8 @@
 A small checkout system with **bugs you can switch on**. It is three things at once:
 
 1. **The thing Kazu is built against.** Build step 1 targets `checkout → payments → postgres`; later steps add services as Kazu gains features.
-2. **Kazu's test oracle.** Each bug flag has a known correct verdict, so Kazu's own end-to-end tests can check that a regression is reported as `REGRESSED`, a flake as flaky, an unchanged system as `pass`, and a fault that never landed as an error rather than a pass. Some bugs are deliberately invisible to database invariants and only show up in latency or telemetry, which is the part unit and integration tests can't reach.
-3. **The quickstart demo.** `cd examples/shop && kazu run` is the first thing a new user tries.
+2. **Kazu's test oracle.** Each bug flag has a known correct verdict, so Kazu's own end-to-end tests can check that a regression is reported as `REGRESSED`, a flake as flaky, an unchanged system as `pass`, and a fault that never landed as an error rather than a pass. Some bugs are deliberately invisible to data checks and only show up in latency or telemetry, which is the part unit and integration tests can't reach.
+3. **The quickstart demo.** `cd examples/shop && kazu run slow-payments --base TAG=dev --head TAG=dev --head SHOP_BUG_RETRY_NEW_KEY=1` is the first thing a new user tries: one bug switched on in head, one regression found.
 
 The shop follows the same packaging rules Kazu asks of customers, which are Antithesis's rules: a complete, isolated system (compose, or rendered Kubernetes manifests), no outbound internet, services reach each other by name. It is laid out exactly like a customer repo (DESIGN.md §4.1): the **system** in `docker-compose.yml`, **traffic** as the k6 template, **checks** as files for Kazu's Python SDK image, and **`kazu.yaml`** declaring the three.
 
@@ -135,7 +135,7 @@ The edits to the template are the shop's dogfood test of the customer path: the 
 | Env var | Set by | Effect |
 |---|---|---|
 | `KAZU_SEED` | Kazu | Idempotency keys (`{{seed}}-{{n}}`) and amounts derive from it, so base and head send the same sequence. Amounts: about 70% below 1,000 cents, 30% at or above, so the fraud edge is exercised |
-| `KAZU_DURATION` | Kazu | Computed per scenario; for the shop's faults (10 s in, up to 20 s long, 60 s recovery) it comes to 100 s |
+| `KAZU_DURATION` | Kazu | Computed per scenario: for the shop's time-triggered faults (10 s in, up to 20 s long, 60 s recovery, 10 s margin) it comes to 100 s; `payments-crash` uses a request-count trigger, so it gets the 120 s default |
 | `RATE` | template default | 10 orders/s |
 | `DOUBLE_SUBMIT` | the `double-submit` scenario's `env` | Sends every order twice at once with the same key (`http.batch`, a double-click). The race flag needs it |
 
@@ -162,22 +162,22 @@ No second git commit is needed to produce a regression. Each flag is a failure c
 | `SHOP_BUG_NO_RECONNECT` | payments | Uses one `pgx.Conn` opened at startup instead of a pool, and never redials. After a DB blip every charge fails until restart. | `db-blip` | No reconnect |
 | `SHOP_BUG_ACK_BEFORE_WRITE` | worker | Acks the message, then writes ledger entries. A crash in between loses the entries. A fixed 50 ms gap between ack and write keeps the window wide enough to hit reliably. | `worker-crash` | At-most-once by accident |
 | `SHOP_BUG_RACE_P=<p>` | payments | With probability `p` per request, skips the advisory lock, leaving a bare check-then-insert; two concurrent requests with the same key can both insert. Uses the service's own unseeded RNG **on purpose**: this is nondeterminism Kazu does not control. | `double-submit` | Check-then-act race |
-| `SHOP_BUG_RETRY_NO_BACKOFF` | checkout | Retries payments up to 10 times with no backoff. Still idempotent, so every database invariant passes; it just multiplies load on a struggling dependency. | `payments-down` | Retry amplification |
-| `SHOP_BUG_PANIC_ON_UNAVAILABLE` | payments | Dereferences a nil response when fraud returns `UNAVAILABLE` and crashes; the restart policy brings it back within seconds. Checkout's retries hide it from every data invariant. | `flaky-fraud` | Crash on an error path |
+| `SHOP_BUG_RETRY_NO_BACKOFF` | checkout | Retries payments up to 10 times with no backoff. Still idempotent, so every data check passes; it just multiplies load on a struggling dependency. | `payments-down` | Retry amplification |
+| `SHOP_BUG_PANIC_ON_UNAVAILABLE` | payments | Dereferences a nil response when fraud returns `UNAVAILABLE` and crashes; the restart policy brings it back within seconds. Checkout's retries hide it from every data check. | `flaky-fraud` | Crash on an error path |
 | `SHOP_BUG_POOL_LEAK` | payments | When the fraud call fails, returns 503 without releasing its database connection until a 5 s timeout. Correct results, but the pool drains and every request waits. | `flaky-fraud` | Resource leak on an error path |
 
-`PANIC_ON_UNAVAILABLE` is caught only by the default crash check (DESIGN.md §4.5, default checks). `RETRY_NO_BACKOFF` and `POOL_LEAK` are the "why not unit or integration tests?" rows: no invariant over the data catches them, and they only appear when the whole system runs under a fault. They are caught by telemetry and by latency regression.
+`PANIC_ON_UNAVAILABLE` is caught only by the default crash check (DESIGN.md §4.6, default checks). `RETRY_NO_BACKOFF` and `POOL_LEAK` are the "why not unit or integration tests?" rows: no check over the data catches them, and they only appear when the whole system runs under a fault. They are caught by telemetry and by latency regression.
 
 Deliberately left out for now, because a toy can't make them meaningful without extra machinery: full retry storms and metastable failure (need load near capacity), missing bulkheads (need per-route SLOs), poison messages (need a dead-letter path). See Open questions.
 
-### Routing traps
+### Traps
 
-Off by default. These test Kazu's routing and its landed check (DESIGN.md §6.6), not the shop's resilience.
+Off by default. These test Kazu's own safety checks (the landed check, DESIGN.md §6.6; no-data; incompatible-with-base), not the shop's resilience.
 
 | Trap | What it does | What Kazu must do |
 |---|---|---|
 | `SHOP_TRAP_PAYMENTS_BY_IP` | Checkout reaches payments by its static IP instead of the name `payments`, so the hosts-file alias never applies | Report every fault on `checkout -> payments` as **not exercised**, never `pass` |
-| `SHOP_SCHEMA_V2` | Adds a `currency` column to `orders`, and `checks/shop.py` has one check that reads it | Report that check as **incompatible with base** when base runs without the flag |
+| `SHOP_TRAP_SCHEMA_V2` | Adds a `currency` column to `orders`, and `checks/shop.py` has one check that reads it | Report that check as **incompatible with base** when base runs without the flag |
 | `SHOP_TRAP_NO_OTEL` | Services export telemetry nowhere (SDK disabled) | Report every metric check as **no data**, never `pass` |
 
 ---
@@ -222,13 +222,12 @@ scenarios:
   payments-db-blip:
     payments -> postgres: down for 15s after 10s   # one edge only
   worker-crash:
-    worker: crash after 15s, restart after 5s
+    worker: crash after 15s, restart after 5s       # time trigger: worker has no HTTP/gRPC inbound edge
   double-submit:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }       # no faults; concurrent duplicates for the race flag
 
+# Default checks (DESIGN.md §4.6) already cover user-facing recovery and p99 on traffic -> checkout.
 invariants:                                        # one-line checks; code checks live in checks/
-  - recovers: checkout within 60s
-  - no_regression: checkout p99 within 20%         # proxy-measured on traffic -> checkout
   - metric:                                        # retries per order
       query: sum(increase(shop_payments_attempts_total[5m])) / sum(increase(shop_orders_created_total[5m]))
       max: 3
@@ -261,14 +260,14 @@ Each row is an end-to-end test of Kazu itself. `fail_on: regression` throughout.
 | # | Base flags | Head flags | Scenario | Expected verdict | Caught by | Tests | Step |
 |---|---|---|---|---|---|---|---|
 | 1 | — | — | all | `pass`, no violations | — | No false positives on an unchanged system | 1 |
-| 2 | — | `RETRY_NEW_KEY` | `slow-payments` | `REGRESSED` | `no_double_charge` | Core loop: latency fault → invariant → verdict | 1 |
+| 2 | — | `RETRY_NEW_KEY` | `slow-payments` | `REGRESSED` | `no_double_charge` | Core loop: latency fault → check → verdict | 1 |
 | 3 | — | `RETRY_NEW_KEY` | `baseline` | `pass` | — | Bug is latent until the fault fires | 1 |
 | 4 | — | `FAIL_OPEN` | `payments-down` | `REGRESSED` | `paid_means_charged` | Dependency outage | 1 |
-| 5 | — | `NO_RECONNECT` | `db-blip` | `REGRESSED` | `recovers` | `down` cuts live connections | 1 |
+| 5 | — | `NO_RECONNECT` | `db-blip` | `REGRESSED` | default: user-facing recovery | `down` cuts live connections | 1 |
 | 6 | — + trap `PAYMENTS_BY_IP` | `RETRY_NEW_KEY` + trap `PAYMENTS_BY_IP` | `slow-payments` | **not exercised** (error, not pass) | landed check | No false pass when a fault can't land | 1 |
 | 7 | — | — | `payments-db-blip` | `pass`; checkout's DB traffic sees no fault | proxy counters | Per-edge routing: one caller's alias doesn't leak to another | 1 |
 | 8 | `RETRY_NEW_KEY` | `RETRY_NEW_KEY` | `slow-payments` | `pass` (violation in both) | — | Regression, not violation, gates | 3 |
-| 9 | — | `NO_TIMEOUT` | `payments-blackhole` | `REGRESSED` | `no_regression` (p99), `recovers` | Blackhole, latency and recovery checks | 2 |
+| 9 | — | `NO_TIMEOUT` | `payments-blackhole` | `REGRESSED` | default: user-facing p99 and recovery | Blackhole, latency and recovery checks | 2 |
 | 10 | `RACE_P=0.1` | `RACE_P=0.1` | `double-submit` | `flaky`, not regressed | `no_double_charge` | Flake classification | 3 |
 | 11 | — | `RACE_P=0.1` | `double-submit` | `REGRESSED` given enough trials | `no_double_charge` | Statistical power of adaptive trials | 3 |
 | 12 | — | `NO_RECONCILE` | `payments-crash` | `REGRESSED` | `orders_settle` | Process faults; unknown outcomes | 4 |
@@ -276,14 +275,14 @@ Each row is an end-to-end test of Kazu itself. `fail_on: regression` throughout.
 | 14 | — | `RETRY_NEW_KEY` | `slow-payments`, **on K3s** | `REGRESSED` | `no_double_charge` | Same verdict from the Kubernetes driver | 4 |
 | 15 | — | `NO_RECONCILE` | `payments-crash`, **on K3s** | `REGRESSED` | `orders_settle` | Crash restarts the container in place, not a new pod | 4 |
 | 16 | — | — | `baseline`, repeated 20 times | `pass` on `no_regression` in at least the target share of runs | — | False-positive rate of the per-run noise estimate on a noisy runner | 3 |
-| 17 | — | `POOL_LEAK` | `flaky-fraud` | `REGRESSED`; all data checks pass | `no_regression` (p99) | Latency regression from the proxy alone, no telemetry | 3 |
+| 17 | — | `POOL_LEAK` | `flaky-fraud` | `REGRESSED`; all data checks pass | default: user-facing p99 | Latency regression from the proxy alone, no telemetry | 3 |
 | 18 | — | `POOL_LEAK` | `flaky-fraud` | `REGRESSED` | pool-wait `metric` | Same bug, now named by the app's own telemetry | 4 |
 | 19 | — | `RETRY_NO_BACKOFF` | `payments-down` | `REGRESSED`; all data checks pass | retries-per-order `metric` | Retry amplification, invisible to data checks | 4 |
 | 20 | trap `NO_OTEL` | trap `NO_OTEL` | `payments-down` | metric checks **no data** (error, not pass) | no-data check | A missing signal is never a pass | 4 |
 | 21 | — | `PANIC_ON_UNAVAILABLE` | `flaky-fraud`, no user checks | `REGRESSED` | default: no unexpected crashes | Defaults catch a bug with no user-written checks | 2 |
-| 22 | — | `NO_RECONNECT` | `db-blip`, no user checks | `REGRESSED` | default: user-facing error rate recovers | Defaults give a verdict on a minimal config | 3 |
+| 22 | — | `NO_RECONNECT` | `db-blip`, with `checks:` and `invariants:` removed from `kazu.yaml` | `REGRESSED` | default: user-facing recovery | Defaults give a verdict on a minimal config | 3 |
 | 23 | — | — | `baseline`, `traffic -> checkout` tolerance 1% on a shared runner | **underpowered** warning, not pass or fail | verdict engine | Kazu says when noise is too large to resolve the tolerance | 3 |
-| 24 | — | `NO_RECONNECT` | `auto_scenarios: true`, no user scenarios or checks | `REGRESSED` on the generated `postgres` edge-down scenarios; all others pass | default: user-facing error rate recovers | Auto scenarios find a regression from a near-empty config | 4 |
+| 24 | — | `NO_RECONNECT` | `auto_scenarios: true`, no user scenarios or checks | `REGRESSED` on the generated `payments -> postgres` down and `postgres` crash scenarios; all others pass | default: user-facing recovery | Auto scenarios find a regression from a near-empty config | 4 |
 | 25 | — | — | a scenario with `checkout -> postgres: crash after 100 requests` | **config error** at load, before any trial | config validation | Request-count triggers are rejected on TCP edges | 1 |
 | 26 | — | trap `SCHEMA_V2` | `baseline` | **incompatible with base** for that check, not a verdict | check host | A check that errors on base is reported, not counted | 3 |
 
@@ -300,7 +299,7 @@ The matrix also lives as `expectations.yaml`, read by an end-to-end test in the 
   base: {}
   head: { SHOP_BUG_RETRY_NEW_KEY: "1" }
   scenario: slow-payments
-  expect: { verdict: regressed, invariant: no_double_charge }
+  expect: { verdict: regressed, check: no_double_charge }
 ```
 
 Each row runs with a fixed `--seed`, so a failing e2e test prints the `kazu replay` command like any other failure.
@@ -335,11 +334,10 @@ A separate Go module keeps the services' dependencies (pgx, amqp091-go, grpc) ou
 |---|---|---|
 | 1 | `checkout` (with reconciler), `payments`, `postgres`, schema, `load/traffic.js` (k6 template), compose, `checks/shop.py`, `RETRY_NEW_KEY`, `FAIL_OPEN`, `NO_RECONNECT`, `PAYMENTS_BY_IP` trap, `no_double_charge`, `paid_means_charged` | 1–7, 25 |
 | 2 | `fraud` (gRPC), `flaky-fraud`, `NO_TIMEOUT`, `POOL_LEAK`, `PANIC_ON_UNAVAILABLE`, `orders_settle`, `ledger_balances` (no-op until step 4) | 9, 21 |
-| 3 | `RACE_P`, `double-submit`, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17, 22, 23, 26 |
+| 3 | `RACE_P`, `double-submit`, `SCHEMA_V2` trap, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17, 22, 23, 26 |
 | 4 | `worker`, `rabbitmq`, `fakestripe`, `otel-collector` and service telemetry, `NO_RECONCILE`, `ACK_BEFORE_WRITE`, `RETRY_NO_BACKOFF`, `NO_OTEL` trap, `k8s/rendered/` | 12–15, 18–20, 24 |
 
 ## Open questions
 
-- `worker-crash` uses a wall-clock trigger because the worker has no inbound edge to count requests on. Revisit once raw-TCP request counting is settled (DESIGN.md §10).
 - Whether `blackhole` lands in step 1 or 2 of the proxy; row 9 moves with it.
 - Retry storms, bulkheads and poison messages: worth adding once Kazu has per-route SLOs and the shop has a load mode near capacity.

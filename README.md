@@ -2,7 +2,7 @@
 
 **Resilience regression testing for every release.** By [Zugzwang](https://github.com/zugzwang-io).
 
-On every PR or release candidate, Kazu answers one question: *did this change make us more fragile than the last release?* It injects seeded faults into your system, checks built-in and user-written invariants, and compares the result against the base branch.
+On every PR or release candidate, Kazu answers one question: *did this change make us more fragile than the last release?* It injects seeded faults into your system, runs built-in and user-written checks, and compares the result against the base branch.
 
 > **Status: pre-alpha.** Nothing here works yet beyond `hello, world`. The sections below describe where Kazu is headed, not what it does today.
 
@@ -18,27 +18,33 @@ A fuller config declares traffic and checks (each an image), the edges Kazu may 
 
 ```yaml
 system: docker-compose.yml
-traffic: { image: grafana/k6, command: [run, /files/checkout.js], files: ./load }
+traffic: { image: grafana/k6:1.0.0, command: [run, /files/checkout.js], files: ./load }
 checks:  { image: ghcr.io/zugzwang-io/kazu-python:1, files: ./checks }
 
 edges:
+  traffic -> checkout: http          # user-facing; built-in checks read it
   checkout -> payments: http
   checkout -> postgres: tcp
 
+connections:
+  postgres: postgres://postgres:dev@postgres/checkout
+
 scenarios:
   slow-payments:
-    checkout -> payments: latency 300ms ±50ms
+    checkout -> payments: latency 300ms ±50ms after 20s
   db-blip:
     postgres: down for 15s after 30s
 
-invariants:
+invariants:                          # on top of built-in crash, error-rate, latency and recovery checks
+  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1", expect: empty }
   - no_regression: checkout p99 within 10%
-  - recovers: checkout within 60s
 ```
 
 Then run it against base and head:
 
 ```
+$ kazu run --suite pr --base TAG=main-9c41e2 --head TAG=pr-a1f3c9
+
 kazu run  ·  suite pr  ·  base main@9c41e2 vs head a1f3c9
 
   slow-payments              ✓ pass       p99 612ms → 640ms (+4%)
@@ -52,7 +58,7 @@ Every failure prints the command that reproduces it (`kazu replay <run-id>`).
 - **A fault-injection and assertion runtime, nothing more.** You provide a complete, isolated system (docker compose, or Kubernetes manifests); Kazu owns the wires between services and the checks.
 - **Fresh environment per trial.** No state-reset magic.
 - **Checks in any language.** Built-in defaults, one-line SQL and metric checks, or code in a thin SDK image (Python, TypeScript, Go first).
-- **Runs anywhere.** Laptop, any CI, Kubernetes. One static Go binary.
+- **Runs in CI or on a laptop.** One static Go binary; everything else it runs is an image.
 - **The runtime is free, forever.** Apache 2.0, with no features gated on your own compute.
 
 ## Development
