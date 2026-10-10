@@ -6,7 +6,7 @@ A small checkout system with **bugs you can switch on**. It is three things at o
 2. **Kazu's test oracle.** Each bug flag has a known correct verdict, so Kazu's own end-to-end tests can check that a regression is reported as `REGRESSED`, a flake as flaky, an unchanged system as `pass`, and a fault that never landed as an error rather than a pass. Some bugs are deliberately invisible to database invariants and only show up in latency or telemetry, which is the part unit and integration tests can't reach.
 3. **The quickstart demo.** `cd examples/shop && kazu run` is the first thing a new user tries.
 
-The shop follows the same packaging rules Kazu asks of customers, which are Antithesis's rules: a complete, isolated system (compose, or rendered Kubernetes manifests), no outbound internet, services reach each other by name. It is laid out exactly like a customer repo (DESIGN.md §4.1): the **system** in `docker-compose.yml`, **traffic** as an image, **checks** as files for Kazu's Python SDK image, and **`kazu.yaml`** declaring the three.
+The shop follows the same packaging rules Kazu asks of customers, which are Antithesis's rules: a complete, isolated system (compose, or rendered Kubernetes manifests), no outbound internet, services reach each other by name. It is laid out exactly like a customer repo (DESIGN.md §4.1): the **system** in `docker-compose.yml`, **traffic** as the k6 template, **checks** as files for Kazu's Python SDK image, and **`kazu.yaml`** declaring the three.
 
 Status: spec only. Code lands in follow-up PRs, one per build step.
 
@@ -128,13 +128,16 @@ create table ledger_entries (
 
 ## Traffic
 
-`load/`: a small Go program built into the `shop-load` image, which `kazu.yaml` declares as traffic. It is not in the compose file. Kazu starts it once the system is ready, on the system's network; it sends orders at a constant arrival rate (not closed-loop, so a slow checkout doesn't slow the load down) and exits when done, which ends the traffic phase.
+`load/traffic.js`: Kazu's k6 template (DESIGN.md §4.3), edited the way a customer would, run in the `grafana/k6` image that `kazu.yaml` declares as traffic. It is not in the compose file. Kazu starts it once the system is ready, on the system's network; it sends orders at a constant arrival rate and exits after `KAZU_DURATION`, which ends the traffic phase.
+
+The edits to the template are the shop's dogfood test of the customer path: the request list is one `POST /orders`, and about ten lines of JavaScript replace the fixed body to draw amounts from the seed and to send duplicates.
 
 | Env var | Set by | Effect |
 |---|---|---|
-| `KAZU_SEED` | Kazu | Idempotency keys and amounts derive from it and the request number, so base and head send the same sequence. Amounts: about 70% below 1,000 cents, 30% at or above, so the fraud edge is exercised |
-| `LOAD_RATE`, `LOAD_DURATION` | defaults | 10 orders/s for 90 s: long enough for the longest scenario (10 s before the fault, 20 s of fault, 60 s of recovery) |
-| `DOUBLE_SUBMIT` | the `double-submit` scenario's `env` | Sends every order twice at once with the same key (a double-click). The race flag needs it |
+| `KAZU_SEED` | Kazu | Idempotency keys (`{{seed}}-{{n}}`) and amounts derive from it, so base and head send the same sequence. Amounts: about 70% below 1,000 cents, 30% at or above, so the fraud edge is exercised |
+| `KAZU_DURATION` | Kazu | Computed per scenario; for the shop's faults (10 s in, up to 20 s long, 60 s recovery) it comes to 100 s |
+| `RATE` | template default | 10 orders/s |
+| `DOUBLE_SUBMIT` | the `double-submit` scenario's `env` | Sends every order twice at once with the same key (`http.batch`, a double-click). The race flag needs it |
 
 The load never judges; it exits 0 if it managed to send its requests, whatever the responses were.
 
@@ -182,7 +185,7 @@ Off by default. These test Kazu's routing and its landed check (DESIGN.md §6.6)
 
 ```yaml
 system: docker-compose.yml       # Kubernetes: system: { manifests: ./k8s/rendered }
-traffic: { image: shop-load:dev }
+traffic: { image: grafana/k6:1.0.0, command: [run, /files/traffic.js], files: ./load }
 checks:  { image: ghcr.io/zugzwang-io/kazu-python:1, files: ./checks }
 
 edges:                           # faults apply only to declared edges
@@ -309,7 +312,7 @@ examples/shop/
   docker-compose.yml
   kazu.yaml
   checks/shop.py          # mounted into the kazu-python SDK image
-  load/                   # Go load generator + Dockerfile → shop-load image
+  load/traffic.js         # the k6 template, edited; run in grafana/k6
   expectations.yaml
   db/schema.sql
   k8s/rendered/           # raw manifests for K3s (step 4)
@@ -326,7 +329,7 @@ A separate Go module keeps the services' dependencies (pgx, amqp091-go, grpc) ou
 
 | Step | Adds | Rows |
 |---|---|---|
-| 1 | `checkout` (with reconciler), `payments`, `postgres`, schema, `load` image, compose, `checks/shop.py`, `RETRY_NEW_KEY`, `FAIL_OPEN`, `NO_RECONNECT`, `PAYMENTS_BY_IP` trap, `no_double_charge`, `paid_means_charged` | 1–7 |
+| 1 | `checkout` (with reconciler), `payments`, `postgres`, schema, `load/traffic.js` (k6 template), compose, `checks/shop.py`, `RETRY_NEW_KEY`, `FAIL_OPEN`, `NO_RECONNECT`, `PAYMENTS_BY_IP` trap, `no_double_charge`, `paid_means_charged` | 1–7 |
 | 2 | `fraud` (gRPC), `flaky-fraud`, `NO_TIMEOUT`, `POOL_LEAK`, `PANIC_ON_UNAVAILABLE`, `orders_settle`, `ledger_balances` (no-op until step 4) | 9, 21 |
 | 3 | `RACE_P`, `double-submit`, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17, 22, 23 |
 | 4 | `worker`, `rabbitmq`, `fakestripe`, `otel-collector` and service telemetry, `NO_RECONCILE`, `ACK_BEFORE_WRITE`, `RETRY_NO_BACKOFF`, `NO_OTEL` trap, `k8s/rendered/` | 12–15, 18–20 |
