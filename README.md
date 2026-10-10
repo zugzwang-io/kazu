@@ -8,13 +8,7 @@ On every PR or release candidate, Kazu answers one question: *did this change ma
 
 ## How it will work
 
-Point Kazu at your system with a `kazu.yaml`. The smallest valid file is one line:
-
-```yaml
-system: docker-compose.yml
-```
-
-A fuller config declares traffic, the edges Kazu may fault, scenarios (faults to inject) and checks. Checks that need code run in Kazu's SDK image:
+Point Kazu at your system with a `kazu.yaml`. It declares your system (a docker compose file), the traffic to send (a load-test image, k6 supported), the connections between services Kazu may fault, the scenarios to run, and your checks. Built-in checks for crashes, errors, latency and recovery run on top. Checks that need code run in Kazu's SDK image:
 
 ```yaml
 system: docker-compose.yml
@@ -61,7 +55,7 @@ kazu run  ·  suite pr  ·  base main@9c41e2 vs head a1f3c9
   db-blip                    ✓ pass       recovers in 11s → 9s
 ```
 
-Every failure prints the command that reproduces it (`kazu replay <run-id>`).
+Every run prints an ID for its stored record, and every failure prints the command that reproduces it, e.g. `kazu replay r_2fj9 --trial 2`.
 
 ## Principles
 
