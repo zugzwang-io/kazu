@@ -177,6 +177,7 @@ Off by default. These test Kazu's routing and its landed check (DESIGN.md §6.6)
 | Trap | What it does | What Kazu must do |
 |---|---|---|
 | `SHOP_TRAP_PAYMENTS_BY_IP` | Checkout reaches payments by its static IP instead of the name `payments`, so the hosts-file alias never applies | Report every fault on `checkout -> payments` as **not exercised**, never `pass` |
+| `SHOP_SCHEMA_V2` | Adds a `currency` column to `orders`, and `checks/shop.py` has one check that reads it | Report that check as **incompatible with base** when base runs without the flag |
 | `SHOP_TRAP_NO_OTEL` | Services export telemetry nowhere (SDK disabled) | Report every metric check as **no data**, never `pass` |
 
 ---
@@ -282,6 +283,9 @@ Each row is an end-to-end test of Kazu itself. `fail_on: regression` throughout.
 | 21 | — | `PANIC_ON_UNAVAILABLE` | `flaky-fraud`, no user checks | `REGRESSED` | default: no unexpected crashes | Defaults catch a bug with no user-written checks | 2 |
 | 22 | — | `NO_RECONNECT` | `db-blip`, no user checks | `REGRESSED` | default: user-facing error rate recovers | Defaults give a verdict on a minimal config | 3 |
 | 23 | — | — | `baseline`, `traffic -> checkout` tolerance 1% on a shared runner | **underpowered** warning, not pass or fail | verdict engine | Kazu says when noise is too large to resolve the tolerance | 3 |
+| 24 | — | `NO_RECONNECT` | `auto_scenarios: true`, no user scenarios or checks | `REGRESSED` on the generated `postgres` edge-down scenarios; all others pass | default: user-facing error rate recovers | Auto scenarios find a regression from a near-empty config | 4 |
+| 25 | — | — | a scenario with `checkout -> postgres: crash after 100 requests` | **config error** at load, before any trial | config validation | Request-count triggers are rejected on TCP edges | 1 |
+| 26 | — | trap `SCHEMA_V2` | `baseline` | **incompatible with base** for that check, not a verdict | check host | A check that errors on base is reported, not counted | 3 |
 
 Rows 10 and 11 are the inputs to the verdict-statistics spike before step 3: measure how many trials row 11 needs to reach `REGRESSED` and how often row 10 is wrongly called a regression, across a range of `p`.
 
@@ -329,10 +333,10 @@ A separate Go module keeps the services' dependencies (pgx, amqp091-go, grpc) ou
 
 | Step | Adds | Rows |
 |---|---|---|
-| 1 | `checkout` (with reconciler), `payments`, `postgres`, schema, `load/traffic.js` (k6 template), compose, `checks/shop.py`, `RETRY_NEW_KEY`, `FAIL_OPEN`, `NO_RECONNECT`, `PAYMENTS_BY_IP` trap, `no_double_charge`, `paid_means_charged` | 1–7 |
+| 1 | `checkout` (with reconciler), `payments`, `postgres`, schema, `load/traffic.js` (k6 template), compose, `checks/shop.py`, `RETRY_NEW_KEY`, `FAIL_OPEN`, `NO_RECONNECT`, `PAYMENTS_BY_IP` trap, `no_double_charge`, `paid_means_charged` | 1–7, 25 |
 | 2 | `fraud` (gRPC), `flaky-fraud`, `NO_TIMEOUT`, `POOL_LEAK`, `PANIC_ON_UNAVAILABLE`, `orders_settle`, `ledger_balances` (no-op until step 4) | 9, 21 |
-| 3 | `RACE_P`, `double-submit`, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17, 22, 23 |
-| 4 | `worker`, `rabbitmq`, `fakestripe`, `otel-collector` and service telemetry, `NO_RECONCILE`, `ACK_BEFORE_WRITE`, `RETRY_NO_BACKOFF`, `NO_OTEL` trap, `k8s/rendered/` | 12–15, 18–20 |
+| 3 | `RACE_P`, `double-submit`, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17, 22, 23, 26 |
+| 4 | `worker`, `rabbitmq`, `fakestripe`, `otel-collector` and service telemetry, `NO_RECONCILE`, `ACK_BEFORE_WRITE`, `RETRY_NO_BACKOFF`, `NO_OTEL` trap, `k8s/rendered/` | 12–15, 18–20, 24 |
 
 ## Open questions
 
