@@ -151,9 +151,10 @@ Each flag is an env var read at startup. Base and head are the **same images wit
 | `SHOP_BUG_ACK_BEFORE_WRITE` | worker | Acks the message, then writes ledger entries. A crash in between loses the entries. A fixed 50 ms gap between ack and write keeps the window wide enough to hit reliably. | `worker-crash` | At-most-once by accident |
 | `SHOP_BUG_RACE_P=<p>` | payments | With probability `p` per request, skips the advisory lock, leaving a bare check-then-insert; two concurrent requests with the same key can both insert. Uses the service's own unseeded RNG **on purpose**: this is nondeterminism Kazu does not control. | `baseline` + `--double-submit` | Check-then-act race |
 | `SHOP_BUG_RETRY_NO_BACKOFF` | checkout | Retries payments up to 10 times with no backoff. Still idempotent, so every database invariant passes; it just multiplies load on a struggling dependency. | `payments-down` | Retry amplification |
+| `SHOP_BUG_PANIC_ON_UNAVAILABLE` | payments | Dereferences a nil response when fraud returns `UNAVAILABLE` and crashes; the restart policy brings it back within seconds. Checkout's retries hide it from every data invariant. | `flaky-fraud` | Crash on an error path |
 | `SHOP_BUG_POOL_LEAK` | payments | When the fraud call fails, returns 503 without releasing its database connection until a 5 s timeout. Correct results, but the pool drains and every request waits. | `flaky-fraud` | Resource leak on an error path |
 
-`RETRY_NO_BACKOFF` and `POOL_LEAK` are the "why not unit or integration tests?" rows: no invariant over the data catches them, and they only appear when the whole system runs under a fault. They are caught by telemetry and by latency regression.
+`PANIC_ON_UNAVAILABLE` is caught only by the default crash check (DESIGN.md §4.3, default checks). `RETRY_NO_BACKOFF` and `POOL_LEAK` are the "why not unit or integration tests?" rows: no invariant over the data catches them, and they only appear when the whole system runs under a fault. They are caught by telemetry and by latency regression.
 
 Deliberately left out for now, because a toy can't make them meaningful without extra machinery: full retry storms and metastable failure (need load near capacity), missing bulkheads (need per-route SLOs), poison messages (need a dead-letter path). See Open questions.
 
@@ -267,12 +268,15 @@ Each row is an end-to-end test of Kazu itself. `fail_on: regression` throughout.
 | 18 | — | `POOL_LEAK` | `flaky-fraud` | `REGRESSED` | pool-wait `metric` | Same bug, now named by the app's own telemetry | 4 |
 | 19 | — | `RETRY_NO_BACKOFF` | `payments-down` | `REGRESSED`; all data invariants pass | retries-per-order `metric` | Retry amplification, invisible to data checks | 4 |
 | 20 | trap `NO_OTEL` | trap `NO_OTEL` | `payments-down` | metric invariants **no data** (error, not pass) | no-data check | A missing signal is never a pass | 4 |
+| 21 | — | `PANIC_ON_UNAVAILABLE` | `flaky-fraud`, `invariants: []` | `REGRESSED` | default: no unexpected crashes | Defaults catch a bug with no user-written checks | 2 |
+| 22 | — | `NO_RECONNECT` | `db-blip`, `invariants: []` | `REGRESSED` | default: user-facing error rate recovers | Defaults give a verdict on a minimal config | 3 |
+| 23 | — | — | `baseline`, `load -> checkout` tolerance 1% on a shared runner | **underpowered** warning, not pass or fail | verdict engine | Kazu says when noise is too large to resolve the tolerance | 3 |
 
 Rows 10 and 11 are the inputs to the verdict-statistics spike before step 3: measure how many trials row 11 needs to reach `REGRESSED` and how often row 10 is wrongly called a regression, across a range of `p`.
 
 Row 6 is the most important safety property. If checkout reaches payments by IP, the latency fault never lands, and without the landed check the bug would pass silently. Row 20 is the same property for telemetry.
 
-Row 16 calibrates the latency tolerance: it is the input for choosing default `no_regression` thresholds and the statistical test, alongside rows 10 and 11.
+Row 16 measures runner noise: it is the input for the default `no_regression` tolerance, the trial counts adaptive trials need, and the statistical test, alongside rows 10 and 11. Row 23 checks that a tolerance smaller than the noise is reported as unresolvable rather than guessed.
 
 The matrix also lives as `expectations.yaml`, read by an end-to-end test in the Kazu repo (`go test -tags e2e ./e2e/...`):
 
@@ -315,8 +319,8 @@ A separate Go module keeps the services' dependencies (pgx, amqp091-go, grpc) ou
 | Step | Adds | Rows |
 |---|---|---|
 | 1 | `checkout` (with reconciler), `payments`, `postgres`, schema, `cmd/load`, compose, `RETRY_NEW_KEY`, `FAIL_OPEN`, `NO_RECONNECT`, `PAYMENTS_BY_IP` trap, `no_double_charge`, `paid_means_charged` | 1–7 |
-| 2 | `fraud` (gRPC), `flaky-fraud`, `NO_TIMEOUT`, `POOL_LEAK`, `orders_settle`, `ledger_balances` (no-op until step 4) | 9 |
-| 3 | `RACE_P`, `--double-submit`, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17 |
+| 2 | `fraud` (gRPC), `flaky-fraud`, `NO_TIMEOUT`, `POOL_LEAK`, `PANIC_ON_UNAVAILABLE`, `orders_settle`, `ledger_balances` (no-op until step 4) | 9, 21 |
+| 3 | `RACE_P`, `--double-submit`, `expectations.yaml`, e2e harness | 8, 10, 11, 16, 17, 22, 23 |
 | 4 | `worker`, `rabbitmq`, `fakestripe`, `otel-collector` and service telemetry, `NO_RECONCILE`, `ACK_BEFORE_WRITE`, `RETRY_NO_BACKOFF`, `NO_OTEL` trap, `k8s/rendered/` | 12–15, 18–20 |
 
 ## Open questions
