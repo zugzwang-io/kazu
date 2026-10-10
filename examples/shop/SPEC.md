@@ -186,8 +186,11 @@ Off by default. These test Kazu's own safety checks (the landed check, DESIGN.md
 
 ```yaml
 system: docker-compose.yml       # Kubernetes: system: { manifests: ./k8s/rendered }
-traffic: { image: grafana/k6:1.0.0, command: [run, /files/traffic.js], files: ./load }
-checks:  { image: ghcr.io/zugzwang-io/kazu-python:1, files: ./checks }
+
+traffic:
+  image: grafana/k6:1.0.0
+  command: [run, /load/traffic.js]
+  volumes: [./load:/load:ro]
 
 edges:                           # faults apply only to declared edges
   traffic -> checkout: http                                  # never faulted; user-facing latency and errors
@@ -195,7 +198,7 @@ edges:                           # faults apply only to declared edges
   checkout -> postgres: tcp
   payments -> postgres: tcp
   payments -> fraud: grpc                                    # step 2
-  payments -> fakestripe: { tcp, tls: true }                 # step 4; HTTP faults would need the test CA
+  payments -> fakestripe: { protocol: tcp, tls: true }       # step 4; HTTP faults would need the test CA
   checkout -> rabbitmq: tcp                                  # step 4
   worker -> rabbitmq: tcp                                    # step 4
 
@@ -206,41 +209,51 @@ telemetry:
   collector: otel-collector      # alias this name to Kazu's OTLP receiver
 
 scenarios:
-  baseline: {}                                     # no faults; a sanity floor
+  baseline: {}                   # no faults; a sanity floor
   slow-payments:
-    checkout -> payments: latency 1500ms ±200ms after 10s   # above checkout's 1 s timeout
+    faults:
+      - { edge: checkout -> payments, fault: latency, delay: 1500ms, jitter: 200ms, after: 10s }   # above checkout's 1 s timeout
   payments-blackhole:
-    checkout -> payments: blackhole for 20s after 10s
+    faults:
+      - { edge: checkout -> payments, fault: blackhole, after: 10s, for: 20s }
   payments-down:
-    checkout -> payments: down for 20s after 10s
+    faults:
+      - { edge: checkout -> payments, fault: down, after: 10s, for: 20s }
   payments-crash:
-    payments: crash after 100 requests, restart after 5s
-  flaky-fraud:                                     # step 2
-    payments -> fraud: errors 10% UNAVAILABLE after 10s
+    faults:
+      - { service: payments, fault: crash, after_requests: 100, restart_after: 5s }
+  flaky-fraud:                   # step 2
+    faults:
+      - { edge: payments -> fraud, fault: errors, rate: 10%, code: UNAVAILABLE, after: 10s }
   db-blip:
-    postgres: down for 15s after 10s               # every declared edge into postgres
+    faults:
+      - { service: postgres, fault: down, after: 10s, for: 15s }          # every declared edge into postgres
   payments-db-blip:
-    payments -> postgres: down for 15s after 10s   # one edge only
-  worker-crash:
-    worker: crash after 15s, restart after 5s       # time trigger: worker has no HTTP/gRPC inbound edge
-  double-submit:
-    env: { traffic: { DOUBLE_SUBMIT: "1" } }       # no faults; concurrent duplicates for the race flag
+    faults:
+      - { edge: payments -> postgres, fault: down, after: 10s, for: 15s } # one edge only
+  worker-crash:                  # time trigger: worker has no HTTP/gRPC inbound edge
+    faults:
+      - { service: worker, fault: crash, after: 15s, restart_after: 5s }
+  double-submit:                 # no faults; concurrent duplicates for the race flag
+    env: { traffic: { DOUBLE_SUBMIT: "1" } }
 
 # Default checks (DESIGN.md §4.6) already cover user-facing recovery and p99 on traffic -> checkout.
-invariants:                                        # one-line checks; code checks live in checks/
-  - metric:                                        # retries per order
+checks:
+  - image: ghcr.io/zugzwang-io/kazu-python:1
+    volumes: [./checks:/checks:ro]
+  - metric:                      # retries per order
       query: sum(increase(shop_payments_attempts_total[5m])) / sum(increase(shop_orders_created_total[5m]))
       max: 3
-  - metric:                                        # connection pool wait
+  - metric:                      # connection pool wait, relative to base
       query: histogram_quantile(0.99, sum by (le) (rate(shop_db_pool_acquire_seconds_bucket[5m])))
-      no_regression: within 50%
+      within: 50%
 
 suites:
   pr: [baseline, slow-payments, payments-down, db-blip]
   release: all
 ```
 
-`checks/shop.py`, mounted into Kazu's Python SDK image:
+`checks/shop.py`, mounted into Kazu's Python SDK image by the first entry in `checks:`:
 
 - `no_double_charge` (`@after`): no `order_id` with more than one charge.
 - `paid_means_charged` (`@after`): every `paid` order has a charge.
@@ -280,10 +293,10 @@ Each row is an end-to-end test of Kazu itself. `fail_on: regression` throughout.
 | 19 | — | `RETRY_NO_BACKOFF` | `payments-down` | `REGRESSED`; all data checks pass | retries-per-order `metric` | Retry amplification, invisible to data checks | 4 |
 | 20 | trap `NO_OTEL` | trap `NO_OTEL` | `payments-down` | metric checks **no data** (error, not pass) | no-data check | A missing signal is never a pass | 4 |
 | 21 | — | `PANIC_ON_UNAVAILABLE` | `flaky-fraud`, no user checks | `REGRESSED` | default: no unexpected crashes | Defaults catch a bug with no user-written checks | 2 |
-| 22 | — | `NO_RECONNECT` | `db-blip`, with `checks:` and `invariants:` removed from `kazu.yaml` | `REGRESSED` | default: user-facing recovery | Defaults give a verdict on a minimal config | 3 |
+| 22 | — | `NO_RECONNECT` | `db-blip`, with `checks:` removed from `kazu.yaml` | `REGRESSED` | default: user-facing recovery | Defaults give a verdict on a minimal config | 3 |
 | 23 | — | — | `baseline`, `traffic -> checkout` tolerance 1% on a shared runner | **underpowered** warning, not pass or fail | verdict engine | Kazu says when noise is too large to resolve the tolerance | 3 |
 | 24 | — | `NO_RECONNECT` | `auto_scenarios: true`, no user scenarios or checks | `REGRESSED` on the generated `payments -> postgres` down and `postgres` crash scenarios; all others pass | default: user-facing recovery | Auto scenarios find a regression from a near-empty config | 4 |
-| 25 | — | — | a scenario with `checkout -> postgres: crash after 100 requests` | **config error** at load, before any trial | config validation | Request-count triggers are rejected on TCP edges | 1 |
+| 25 | — | — | a scenario with `{ edge: checkout -> postgres, fault: down, after_requests: 100 }` | **config error** at load, before any trial | config validation | Request-count triggers are rejected on TCP edges | 1 |
 | 26 | — | trap `SCHEMA_V2` | `baseline` | **incompatible with base** for that check, not a verdict | check host | A check that errors on base is reported, not counted | 3 |
 
 Rows 10 and 11 are the inputs to the verdict-statistics spike before step 3: measure how many trials row 11 needs to reach `REGRESSED` and how often row 10 is wrongly called a regression, across a range of `p`.
@@ -292,7 +305,15 @@ Row 6 is the most important safety property. If checkout reaches payments by IP,
 
 Row 16 checks that the per-run noise estimate keeps false positives at the target rate on an unchanged system. With rows 10 and 11 it is how the statistical test, the minimum number of trial pairs and the trial budget are chosen; noise itself is always measured inside each run, never taken from a global baseline. Row 23 checks that a tolerance smaller than that run's noise is reported as unresolvable rather than guessed.
 
-The matrix also lives as `expectations.yaml`, read by an end-to-end test in the Kazu repo (`go test -tags e2e ./e2e/...`):
+### How Kazu's PRs use the matrix
+
+Every Kazu PR runs the matrix as a customer would (DESIGN.md §8, "Testing Kazu"): the PR's own `kazu` binary and SDK images, in the same GitHub Actions workflow `kazu init --ci github` writes for customers, sharded across about 10 jobs. A small Go asserter, not Kazu itself, compares each row's JSON result with `expectations.yaml`; any mismatch blocks the merge. Rows join the gate in the build step that delivers them.
+
+Rows that depend on statistics are made decisive for gating: row 11 uses a race probability high enough that detection is near certain, row 10 asserts "flaky, not regressed" with a wide margin, and row 16's 20 repeats run as 20 shards.
+
+Each bug flag also has a plain Go test in the shop proving the bug happens without Kazu (for example, `RETRY_NEW_KEY` against a slow fake payments double-charges), so a failing row says whether the shop or Kazu broke.
+
+`expectations.yaml`:
 
 ```yaml
 - name: retry-new-key-under-latency

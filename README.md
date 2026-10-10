@@ -14,12 +14,15 @@ Point Kazu at your system with a `kazu.yaml`. The smallest valid file is one lin
 system: docker-compose.yml
 ```
 
-A fuller config declares traffic and checks (each an image), the edges Kazu may fault, scenarios (faults to inject) and one-line checks. Checks that need code go in files for Kazu's SDK image:
+A fuller config declares traffic, the edges Kazu may fault, scenarios (faults to inject) and checks. Checks that need code run in Kazu's SDK image:
 
 ```yaml
 system: docker-compose.yml
-traffic: { image: grafana/k6:1.0.0, command: [run, /files/checkout.js], files: ./load }
-checks:  { image: ghcr.io/zugzwang-io/kazu-python:1, files: ./checks }
+
+traffic:
+  image: grafana/k6:1.0.0
+  command: [run, /load/checkout.js]
+  volumes: [./load:/load:ro]
 
 edges:
   traffic -> checkout: http          # user-facing; built-in checks read it
@@ -31,13 +34,20 @@ connections:
 
 scenarios:
   slow-payments:
-    checkout -> payments: latency 300ms ±50ms after 20s
+    faults:
+      - { edge: checkout -> payments, fault: latency, delay: 300ms, jitter: 50ms, after: 20s }
   db-blip:
-    postgres: down for 15s after 30s
+    faults:
+      - { service: postgres, fault: down, after: 30s, for: 15s }
 
-invariants:                          # on top of built-in crash, error-rate, latency and recovery checks
+checks:                              # on top of built-in crash, error-rate, latency and recovery checks
   - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1", expect: empty }
-  - no_regression: checkout p99 within 10%
+  - no_regression: { service: checkout, measure: p99, within: 10% }
+  - image: ghcr.io/zugzwang-io/kazu-python:1    # checks that need code
+    volumes: [./checks:/checks:ro]
+
+suites:
+  pr: [slow-payments, db-blip]
 ```
 
 Then run it against base and head:
