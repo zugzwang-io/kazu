@@ -263,7 +263,7 @@ Each row is an end-to-end test of Kazu itself. `fail_on: regression` throughout.
 | 13 | — | `ACK_BEFORE_WRITE` | `worker-crash` | `REGRESSED` | `orders_settle` | Process faults, `@settles` | 4 |
 | 14 | — | `RETRY_NEW_KEY` | `slow-payments`, **on K3s** | `REGRESSED` | `no_double_charge` | Same verdict from the Kubernetes driver | 4 |
 | 15 | — | `NO_RECONCILE` | `payments-crash`, **on K3s** | `REGRESSED` | `orders_settle` | Crash restarts the container in place, not a new pod | 4 |
-| 16 | — | — | `baseline`, ×20 trial pairs | `pass` on `no_regression` every time | — | False-positive rate of relative latency checks on a noisy runner | 3 |
+| 16 | — | — | `baseline`, repeated 20 times | `pass` on `no_regression` in at least the target share of runs | — | False-positive rate of the per-run noise estimate on a noisy runner | 3 |
 | 17 | — | `POOL_LEAK` | `flaky-fraud` | `REGRESSED`; all data invariants pass | `no_regression` (p99) | Latency regression from the proxy alone, no telemetry | 3 |
 | 18 | — | `POOL_LEAK` | `flaky-fraud` | `REGRESSED` | pool-wait `metric` | Same bug, now named by the app's own telemetry | 4 |
 | 19 | — | `RETRY_NO_BACKOFF` | `payments-down` | `REGRESSED`; all data invariants pass | retries-per-order `metric` | Retry amplification, invisible to data checks | 4 |
@@ -276,7 +276,7 @@ Rows 10 and 11 are the inputs to the verdict-statistics spike before step 3: mea
 
 Row 6 is the most important safety property. If checkout reaches payments by IP, the latency fault never lands, and without the landed check the bug would pass silently. Row 20 is the same property for telemetry.
 
-Row 16 measures runner noise: it is the input for the default `no_regression` tolerance, the trial counts adaptive trials need, and the statistical test, alongside rows 10 and 11. Row 23 checks that a tolerance smaller than the noise is reported as unresolvable rather than guessed.
+Row 16 checks that the per-run noise estimate keeps false positives at the target rate on an unchanged system. With rows 10 and 11 it is how the statistical test, the minimum number of trial pairs and the trial budget are chosen; noise itself is always measured inside each run, never taken from a global baseline. Row 23 checks that a tolerance smaller than that run's noise is reported as unresolvable rather than guessed.
 
 The matrix also lives as `expectations.yaml`, read by an end-to-end test in the Kazu repo (`go test -tags e2e ./e2e/...`):
 
