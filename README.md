@@ -8,21 +8,25 @@ On every PR or release candidate, Kazu answers one question: *did this change ma
 
 ## How it will work
 
-Point Kazu at your system with a `resilience.yaml`. The smallest valid file is one line:
+Point Kazu at your system with a `kazu.yaml`. The smallest valid file is one line:
 
 ```yaml
 system: docker-compose.yml
 ```
 
-A fuller config declares scenarios (faults to inject) and invariants (what must stay true):
+A fuller config declares the edges Kazu may fault, scenarios (faults to inject) and invariants (what must stay true):
 
 ```yaml
 system: docker-compose.yml
-traffic: k6 run load/checkout.js
+traffic: load                         # a service in your compose file
+
+edges:
+  checkout -> payments: http
+  checkout -> postgres: tcp
 
 scenarios:
   slow-payments:
-    payments: latency 300ms ±50ms
+    checkout -> payments: latency 300ms ±50ms
   db-blip:
     postgres: down for 15s after 30s
 
@@ -45,7 +49,7 @@ Every failure prints the command that reproduces it (`kazu replay <run-id>`).
 
 ## Principles
 
-- **A fault-injection and assertion runtime, nothing more.** You own your environment, credentials and data; Kazu owns the wires between services and the checks.
+- **A fault-injection and assertion runtime, nothing more.** You provide a complete, isolated system (docker compose, or Kubernetes manifests); Kazu owns the wires between services and the checks.
 - **Fresh environment per trial.** No state-reset magic.
 - **Invariants in any language.** An executable's exit code, a SQL query, or a thin SDK (Python, TypeScript, Go first).
 - **Runs anywhere.** Laptop, any CI, Kubernetes. One static Go binary.
