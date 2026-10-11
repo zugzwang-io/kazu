@@ -1,10 +1,10 @@
-# The shop's own checks, with no Kazu involved.
-name: shop
+# Runs on PRs into main that touch the shop (or this file).
+name: pr-shop
 
 on:
   pull_request:
     branches: [main]
-    paths: [examples/shop/**, .github/workflows/shop.yml]
+    paths: [examples/shop/**, .github/workflows/pr-shop.yml]
 
 defaults:
   run:
@@ -22,8 +22,8 @@ jobs:
           cache: false
       - run: go test -race -count=1 ./...
 
-  # Every service's Dockerfile builds. Whether the images run is checked by
-  # compose, once the whole system is in.
+  # Every shop service's Dockerfile builds. Whether the images run is checked
+  # by compose, once the whole system is in.
   shop-images:
     name: shop images
     runs-on: ubuntu-latest

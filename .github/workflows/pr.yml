@@ -1,0 +1,28 @@
+# Runs on every PR into main. One file per trigger: checks that run on the
+# same trigger go here as jobs.
+name: pr
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  # golangci-lint with the root .golangci.yml, once per Go module (it finds
+  # the config by walking up). A new module adds itself to the matrix.
+  lint:
+    name: lint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", examples/shop]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: false
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.1.6
+          working-directory: ${{ matrix.module }}
