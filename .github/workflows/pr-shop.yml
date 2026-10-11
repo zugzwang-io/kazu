@@ -20,6 +20,7 @@ jobs:
         with:
           go-version-file: examples/shop/go.mod
           cache: false
+      # Tests that need Postgres start it themselves (dbtest, testcontainers).
       - run: go test -race -count=1 ./...
 
   # Every shop service's Dockerfile builds. Whether the images run is checked

@@ -154,7 +154,7 @@ The load never judges; it exits 0 if it sent its requests, whatever the response
 
 ## The shop's own test suite
 
-What a decent team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; tests that need Postgres read `SHOP_TEST_DATABASE_URL`, create a fresh database per test from it, and are skipped without it. CI (`.github/workflows/shop.yml`) runs it against a Postgres service container, and also starts the compose system and sends 60 s of traffic, then checks that no order is left pending or charged twice.
+What a decent team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; tests that need Postgres start it with testcontainers (one container per package, a fresh database per test), so they need Docker and nothing else. CI (`.github/workflows/pr-shop.yml`) runs it, and also starts the compose system and sends 60 s of traffic, then checks that no order is left pending or charged twice.
 
 | Layer | Covers |
 |---|---|
