@@ -26,3 +26,7 @@ jobs:
         with:
           version: v2.1.6
           working-directory: ${{ matrix.module }}
+          # Skips validating .golangci.yml against a schema downloaded from
+          # golangci-lint.run, which times out now and then. The linter still
+          # parses the config and fails on a broken one.
+          verify: false
