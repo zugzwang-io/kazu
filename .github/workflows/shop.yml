@@ -38,8 +38,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t shop:dev .
       - name: Start the system
-        run: docker compose up --build --wait --wait-timeout 180
+        run: |
+          docker compose up -d --no-build
+          for i in $(seq 90); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' shop-checkout-1 2>/dev/null)" = healthy ] && exit 0
+            sleep 2
+          done
+          echo "checkout never became healthy"; exit 1
       - name: Send 60 s of traffic
         run: |
           docker run --rm --network shop_default -v "$PWD/load:/load:ro" \
@@ -61,6 +69,14 @@ jobs:
           exit $fail
       - name: Logs
         if: failure()
-        run: docker compose logs --no-color
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color
+          # Also as annotations, readable from the checks API.
+          enc() { sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g'; }
+          echo "::error title=compose ps::$(docker compose ps -a --format '{{.Service}} {{.State}} {{.Status}}' | enc)"
+          for svc in migrate fakestripe payments checkout; do
+            echo "::error title=$svc logs::$(docker compose logs --no-color --tail 15 $svc 2>&1 | enc)"
+          done
       - run: docker compose down -v
         if: always()
