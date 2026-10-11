@@ -1,4 +1,4 @@
-// Command fakestripe serves the card-processor stand-in over HTTPS.
+// Command fakestripe serves the card-processor stand-in.
 package main
 
 import (
@@ -14,6 +14,5 @@ func main() {
 		Latency: svc.EnvDuration("LATENCY", 200*time.Millisecond),
 		Jitter:  svc.EnvDuration("JITTER", 50*time.Millisecond),
 	}
-	svc.Serve(svc.Env("ADDR", ":8443"), s.Handler(),
-		svc.Env("TLS_CERT", "/certs/fakestripe.pem"), svc.Env("TLS_KEY", "/certs/fakestripe-key.pem"))
+	svc.Serve(svc.Env("ADDR", ":12111"), s.Handler())
 }

@@ -10,8 +10,5 @@ RUN CGO_ENABLED=0 go build -trimpath -o /fakestripe ./cmd/fakestripe
 
 FROM scratch
 COPY --from=build /fakestripe /fakestripe
-COPY certs/ca.pem certs/fakestripe.pem certs/fakestripe-key.pem /certs/
-# For `fakestripe healthcheck https://localhost:8443/healthz`.
-ENV CA_FILE=/certs/ca.pem
-EXPOSE 8443
+EXPOSE 12111
 ENTRYPOINT ["/fakestripe"]

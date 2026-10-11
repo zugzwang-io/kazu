@@ -4,8 +4,6 @@ package svc
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -69,18 +67,11 @@ func Fatal(msg string, args ...any) {
 }
 
 // Serve runs h on addr until SIGTERM or SIGINT, then drains for up to 5 s.
-// If certFile is set it serves TLS.
-func Serve(addr string, h http.Handler, certFile, keyFile string) {
+func Serve(addr string, h http.Handler) {
 	srv := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)
-	go func() {
-		if certFile != "" {
-			errc <- srv.ListenAndServeTLS(certFile, keyFile)
-		} else {
-			errc <- srv.ListenAndServe()
-		}
-	}()
-	slog.Info("listening", "addr", addr, "tls", certFile != "")
+	go func() { errc <- srv.ListenAndServe() }()
+	slog.Info("listening", "addr", addr)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -94,32 +85,17 @@ func Serve(addr string, h http.Handler, certFile, keyFile string) {
 	_ = srv.Shutdown(ctx)
 }
 
-// HTTPClient returns a client that trusts only the CA in caFile: the sealed
-// system has no public endpoints. An empty caFile gives a plain client.
-func HTTPClient(caFile string) (*http.Client, error) {
-	if caFile == "" {
-		return &http.Client{}, nil
-	}
-	pem, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, errors.New("no certificates in " + caFile)
-	}
+// HTTPClient is the client services use to call each other: the default
+// transport, keeping enough idle connections for the shop's concurrency.
+func HTTPClient() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	t.MaxIdleConnsPerHost = 64
-	return &http.Client{Transport: t}, nil
+	return &http.Client{Transport: t}
 }
 
-// Healthcheck GETs url and succeeds on a 2xx. CA_FILE is honoured for HTTPS.
+// Healthcheck GETs url and succeeds on a 2xx.
 func Healthcheck(url string) error {
-	c, err := HTTPClient(os.Getenv("CA_FILE"))
-	if err != nil {
-		return err
-	}
+	c := HTTPClient()
 	c.Timeout = 2 * time.Second
 	resp, err := c.Get(url)
 	if err != nil {

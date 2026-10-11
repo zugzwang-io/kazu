@@ -54,7 +54,7 @@ All services are Go, one module, with **one binary and one image per service** (
 | `checkout` | HTTP | 8080 | `payments`, `postgres`, `rabbitmq` (step 4) | 1 |
 | `payments` | HTTP | 8081 | `fraud` (step 2), `fakestripe`, `postgres` | 1 |
 | `postgres` | TCP | 5432 | — | 1 |
-| `fakestripe` | HTTPS (test CA in `certs/`) | 8443 | — | 1 |
+| `fakestripe` | HTTP | 12111 | — | 1 |
 | `fraud` | gRPC | 9090 | — | 2 |
 | `worker` | AMQP consumer | — | `rabbitmq`, `postgres` | 4 |
 | `rabbitmq` | TCP | 5672 | — | 4 |
@@ -102,7 +102,7 @@ Consumes `order.paid` with prefetch 10. For each message, writes two ledger entr
 
 ### `fakestripe`
 
-HTTPS with the test CA in `certs/`. `POST /v1/charges` responds in 200 ms ± 50 ms with a charge id, idempotent on `Idempotency-Key`, in memory. It stands in for an external card processor the way stripe-mock would in a sealed system.
+Plain HTTP on stripe-mock's port. `POST /v1/charges` responds in 200 ms ± 50 ms with a charge id, idempotent on `Idempotency-Key`, in memory. It stands in for an external card processor the way stripe-mock would in a sealed system.
 
 ---
 
@@ -286,7 +286,6 @@ examples/shop/
   docker-compose.yml
   load/traffic.js         # the k6 template, edited
   db/schema.sql
-  certs/                  # test CA and fakestripe's certificate; gen.sh regenerates them
   k8s/rendered/           # raw manifests for K3s (step 4)
   cmd/<service>/          # each service's main
   services/<service>/     # each service's code, tests and Dockerfile:
