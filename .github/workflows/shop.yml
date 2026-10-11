@@ -1,0 +1,48 @@
+# The shop's own checks, with no Kazu involved: its tests, and each service's
+# image.
+name: shop
+
+on:
+  pull_request:
+    paths: [examples/shop/**, .github/workflows/shop.yml]
+  push:
+    branches: [main]
+    paths: [examples/shop/**, .github/workflows/shop.yml]
+
+defaults:
+  run:
+    working-directory: examples/shop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: examples/shop/go.mod
+          cache: false
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  image:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [fakestripe]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          docker build --progress=plain -f services/${{ matrix.service }}/Dockerfile -t shop-${{ matrix.service }} . > build.log 2>&1 && exit 0
+          cat build.log
+          echo "::error title=docker build::$(tail -n 25 build.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+          exit 1
+      - name: Starts and reports healthy
+        if: matrix.service == 'fakestripe'
+        run: |
+          docker run -d --name svc shop-fakestripe
+          for i in $(seq 20); do docker exec svc /fakestripe healthcheck https://localhost:8443/healthz && exit 0; sleep 0.5; done
+          echo "::error title=fakestripe::$(docker logs svc 2>&1 | tail -n 10 | sed ':a;N;$!ba;s/\n/%0A/g')"
+          exit 1
