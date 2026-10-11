@@ -2,6 +2,8 @@
 package main
 
 import (
+	"log"
+	"net/http"
 	"time"
 
 	"github.com/zugzwang-io/kazu/examples/shop/internal/svc"
@@ -9,10 +11,9 @@ import (
 )
 
 func main() {
-	svc.Main("fakestripe")
 	s := &fakestripe.Server{
 		Latency: svc.EnvDuration("LATENCY", 200*time.Millisecond),
 		Jitter:  svc.EnvDuration("JITTER", 50*time.Millisecond),
 	}
-	svc.Serve(svc.Env("ADDR", ":12111"), s.Handler())
+	log.Fatal(http.ListenAndServe(svc.Env("ADDR", ":12111"), s.Handler()))
 }

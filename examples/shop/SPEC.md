@@ -47,7 +47,7 @@ From the product spec. Rule 5 arrives with the worker (step 4) and rule 6 with f
 
 ## Services
 
-All services are Go, one module, with **one binary and one image per service** (`shop-checkout:${TAG}`, ...), so base and head can differ in a single service. Each image's binary also answers `<binary> healthcheck <url>`, the compose healthcheck, since the images have no shell or curl. Services find each other **by name** (`payments`, `postgres`, ...), read from env vars with those names as defaults.
+All services are Go, one module, with **one binary and one image per service** (`shop-checkout:${TAG}`, ...), so base and head can differ in a single service. Images are `alpine`, so compose healthchecks can use `wget`. Services find each other **by name** (`payments`, `postgres`, ...), read from env vars with those names as defaults.
 
 | Service | Protocol | Port | Calls | Arrives in build step |
 |---|---|---|---|---|
@@ -290,7 +290,7 @@ examples/shop/
   cmd/<service>/          # each service's main
   services/<service>/     # each service's code, tests and Dockerfile:
                           #   checkout, payments, fakestripe; fraud (step 2); worker (step 4)
-  internal/svc/           # shared plumbing: env config, serving, healthcheck
+  internal/svc/           # env-var config helpers
   internal/db/            # the Postgres pool; dbtest/ makes a fresh database per test
   proto/fraud.proto
 ```

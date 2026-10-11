@@ -8,7 +8,8 @@ COPY services/fakestripe/ services/fakestripe/
 COPY cmd/fakestripe/ cmd/fakestripe/
 RUN CGO_ENABLED=0 go build -trimpath -o /fakestripe ./cmd/fakestripe
 
-FROM scratch
+# alpine rather than scratch, for wget in the compose healthcheck.
+FROM alpine:3.20
 COPY --from=build /fakestripe /fakestripe
 EXPOSE 12111
 ENTRYPOINT ["/fakestripe"]

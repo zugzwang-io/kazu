@@ -43,6 +43,6 @@ jobs:
         if: matrix.service == 'fakestripe'
         run: |
           docker run -d --name svc shop-fakestripe
-          for i in $(seq 20); do docker exec svc /fakestripe healthcheck http://localhost:12111/healthz && exit 0; sleep 0.5; done
+          for i in $(seq 20); do docker exec svc wget -qO- http://localhost:12111/healthz && exit 0; sleep 0.5; done
           echo "::error title=fakestripe::$(docker logs svc 2>&1 | tail -n 10 | sed ':a;N;$!ba;s/\n/%0A/g')"
           exit 1
