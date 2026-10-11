@@ -54,6 +54,14 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 	s.charges[key] = id
 	s.mu.Unlock()
 
+	// Respond after Latency ± Jitter (200 ms ± 50 ms by default), like a real
+	// card processor. This fixed latency sets payments' capacity: about 20
+	// in flight / ~0.25 s ≈ 80 charges/s on any machine, so faults cause real
+	// queueing and timeouts rather than being absorbed by a fast runner.
+	//
+	// The offset within ±Jitter comes from the key's hash, not a random
+	// number: the same key always waits the same time, so base and head
+	// (which send the same seeded keys) see identical delays.
 	delay := s.Latency
 	if s.Jitter > 0 {
 		span := 2*int64(s.Jitter) + 1
