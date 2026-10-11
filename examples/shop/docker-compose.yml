@@ -1,0 +1,52 @@
+# The shop as a complete, sealed system (DESIGN.md §5): nothing here is
+# Kazu-specific. Base and head differ only in ${TAG} (and, from step 2, the
+# SHOP_BUG_* variables).
+#
+#   docker compose up --build --wait
+name: shop
+
+x-shop: &shop
+  image: shop:${TAG:-dev}
+  build: .
+
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: dev, POSTGRES_DB: shop }
+    healthcheck: { test: [CMD, pg_isready, -U, postgres, -d, shop], interval: 1s, retries: 30 }
+
+  migrate: # setup, as a one-shot job
+    image: postgres:16
+    command: [psql, -h, postgres, -U, postgres, -d, shop, -v, ON_ERROR_STOP=1, -f, /db/schema.sql]
+    environment: { PGPASSWORD: dev }
+    volumes: [./db:/db:ro]
+    depends_on: { postgres: { condition: service_healthy } }
+
+  fakestripe: # the external card processor, mocked inside the system
+    <<: *shop
+    command: [fakestripe]
+    environment: { CA_FILE: /certs/ca.pem }
+    healthcheck: { test: [CMD, /shop, healthcheck, "https://localhost:8443/healthz"], interval: 1s, retries: 30 }
+
+  payments:
+    <<: *shop
+    command: [payments]
+    environment:
+      DATABASE_URL: postgres://postgres:dev@postgres:5432/shop
+      STRIPE_URL: https://fakestripe:8443
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      fakestripe: { condition: service_healthy }
+    healthcheck: { test: [CMD, /shop, healthcheck, "http://localhost:8081/healthz"], interval: 1s, retries: 30 }
+
+  checkout:
+    <<: *shop
+    command: [checkout]
+    environment:
+      DATABASE_URL: postgres://postgres:dev@postgres:5432/shop
+      PAYMENTS_URL: http://payments:8081
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      payments: { condition: service_healthy }
+    healthcheck: { test: [CMD, /shop, healthcheck, "http://localhost:8080/healthz"], interval: 1s, retries: 30 }
+    ports: ["8080:8080"] # for poking at it locally; traffic uses the name
