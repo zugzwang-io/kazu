@@ -2,7 +2,7 @@
 # Kazu-specific. Base and head differ only in ${TAG} (and, from step 2, the
 # SHOP_BUG_* variables).
 #
-#   docker compose up --build --wait
+#   docker build -t shop:dev . && docker compose up -d
 name: shop
 
 x-shop: &shop
