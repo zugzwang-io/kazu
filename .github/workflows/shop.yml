@@ -39,7 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the image
-        run: docker build -t shop:dev .
+        run: |
+          docker build --progress=plain -t shop:dev . > build.log 2>&1 && exit 0
+          cat build.log
+          echo "::error title=docker build::$(tail -n 25 build.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+          exit 1
       - name: Start the system
         run: |
           docker compose up -d --no-build
