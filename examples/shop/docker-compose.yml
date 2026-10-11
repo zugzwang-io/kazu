@@ -1,0 +1,50 @@
+# The shop as a complete, sealed system (DESIGN.md §5): nothing here is
+# Kazu-specific. Base and head differ only in ${TAG} (and, from step 2, the
+# SHOP_BUG_* variables).
+#
+#   docker compose up -d --build --wait checkout
+name: shop
+
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: dev, POSTGRES_DB: shop }
+    healthcheck: { test: [CMD, pg_isready, -U, postgres, -d, shop], interval: 1s, retries: 30 }
+
+  migrate: # setup, as a one-shot job: every service's schema
+    image: postgres:16
+    command: [psql, -h, postgres, -U, postgres, -d, shop, -v, ON_ERROR_STOP=1,
+              -f, /schemas/payments.sql, -f, /schemas/checkout.sql]
+    environment: { PGPASSWORD: dev }
+    volumes:
+      - ./services/payments/schema.sql:/schemas/payments.sql:ro
+      - ./services/checkout/schema.sql:/schemas/checkout.sql:ro
+    depends_on: { postgres: { condition: service_healthy } }
+
+  fakestripe: # the external card processor, mocked inside the system
+    image: shop-fakestripe:${TAG:-dev}
+    build: { context: ., dockerfile: services/fakestripe/Dockerfile }
+    healthcheck: { test: [CMD, wget, -qO-, "http://localhost:12111/healthz"], interval: 1s, retries: 30 }
+
+  payments:
+    image: shop-payments:${TAG:-dev}
+    build: { context: ., dockerfile: services/payments/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://postgres:dev@postgres:5432/shop
+      STRIPE_URL: http://fakestripe:12111
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      fakestripe: { condition: service_healthy }
+    healthcheck: { test: [CMD, wget, -qO-, "http://localhost:8081/healthz"], interval: 1s, retries: 30 }
+
+  checkout:
+    image: shop-checkout:${TAG:-dev}
+    build: { context: ., dockerfile: services/checkout/Dockerfile }
+    environment:
+      DATABASE_URL: postgres://postgres:dev@postgres:5432/shop
+      PAYMENTS_URL: http://payments:8081
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      payments: { condition: service_healthy }
+    healthcheck: { test: [CMD, wget, -qO-, "http://localhost:8080/healthz"], interval: 1s, retries: 30 }
+    ports: ["8080:8080"] # for poking at it locally; traffic uses the name
