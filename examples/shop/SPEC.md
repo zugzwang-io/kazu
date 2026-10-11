@@ -47,14 +47,14 @@ From the product spec. Rule 5 arrives with the worker (step 4) and rule 6 with f
 
 ## Services
 
-All services are Go, one module, with **one binary and one image per service** (`shop-checkout:${TAG}`, ...), so base and head can differ in a single service. Each image's binary also answers `<binary> healthcheck <url>`, the compose healthcheck, since the images have no shell or curl. Services find each other **by name** (`payments`, `postgres`, ...), read from env vars with those names as defaults.
+All services are Go, one module, with **one binary and one image per service** (`shop-checkout:${TAG}`, ...), so base and head can differ in a single service. Images are `alpine`, so compose healthchecks can use `wget`. Services find each other **by name** (`payments`, `postgres`, ...), read from env vars with those names as defaults.
 
 | Service | Protocol | Port | Calls | Arrives in build step |
 |---|---|---|---|---|
 | `checkout` | HTTP | 8080 | `payments`, `postgres`, `rabbitmq` (step 4) | 1 |
 | `payments` | HTTP | 8081 | `fraud` (step 2), `fakestripe`, `postgres` | 1 |
 | `postgres` | TCP | 5432 | — | 1 |
-| `fakestripe` | HTTPS (test CA in `certs/`) | 8443 | — | 1 |
+| `fakestripe` | HTTP | 12111 | — | 1 |
 | `fraud` | gRPC | 9090 | — | 2 |
 | `worker` | AMQP consumer | — | `rabbitmq`, `postgres` | 4 |
 | `rabbitmq` | TCP | 5672 | — | 4 |
@@ -102,7 +102,7 @@ Consumes `order.paid` with prefetch 10. For each message, writes two ledger entr
 
 ### `fakestripe`
 
-HTTPS with the test CA in `certs/`. `POST /v1/charges` responds in 200 ms ± 50 ms with a charge id, idempotent on `Idempotency-Key`, in memory. It stands in for an external card processor the way stripe-mock would in a sealed system.
+Plain HTTP on stripe-mock's port. `POST /v1/charges` responds in 200 ms ± 50 ms with a charge id, idempotent on `Idempotency-Key`, in memory. It stands in for an external card processor the way stripe-mock would in a sealed system.
 
 ---
 
@@ -286,12 +286,11 @@ examples/shop/
   docker-compose.yml
   load/traffic.js         # the k6 template, edited
   db/schema.sql
-  certs/                  # test CA and fakestripe's certificate; gen.sh regenerates them
   k8s/rendered/           # raw manifests for K3s (step 4)
   cmd/<service>/          # each service's main
   services/<service>/     # each service's code, tests and Dockerfile:
                           #   checkout, payments, fakestripe; fraud (step 2); worker (step 4)
-  internal/svc/           # shared plumbing: env config, serving, healthcheck
+  internal/svc/           # env-var config helpers
   internal/db/            # the Postgres pool; dbtest/ makes a fresh database per test
   proto/fraud.proto
 ```
