@@ -14,7 +14,7 @@ Status: spec. Code lands in small PRs: one per service (with its Dockerfile and 
 
 ## Ground rules
 
-1. **Every bug must pass the shop's own test suite**, the tests a decent team writes. A bug ordinary tests catch doesn't demonstrate anything.
+1. **Every bug must pass the shop's own test suite**, which is the suite a strong team writes: unit tests, plus integration tests across services covering every end-to-end path an order can take, including each way a dependency can fail during a request. A bug that suite catches demonstrates nothing, so it is redesigned or dropped. Kazu earns its place on what such a suite can't reasonably reach: dependencies failing mid-traffic, latency and contention under real concurrency, resource exhaustion, recovery over time.
 2. **Misses are recorded, not patched.** Outcomes come from real runs. A miss is fixed only by a generic Kazu improvement that helps every customer, never by a shop-specific check.
 
 The shop's checks are written by people who know its bugs, so the shop tests Kazu's mechanics; its catch rate is not evidence of what Kazu finds on real systems. That evidence comes from dogfooding.
@@ -108,11 +108,11 @@ Plain HTTP on stripe-mock's port. `POST /v1/charges` responds in 200 ms ± 50 ms
 
 ## Data
 
-`db/schema.sql`, one database `shop`, applied by the `migrate` one-shot job (compose) or an init Job (Kubernetes):
+One database, `shop`, with a Postgres schema per service. Each service owns its tables in `services/<name>/schema.sql` and connects with `search_path` set to its schema, so its queries never name another service's tables. The `migrate` one-shot job (compose) or an init Job (Kubernetes) applies every service's file. One database rather than one per service keeps cross-service checks a plain SQL join (`checkout.orders` with `payments.charges`).
 
-- `orders (id, idempotency_key unique, amount_cents, status, created_at, updated_at)`: `id` is `ord_` + the key; status is `pending`, `paid` or `failed` (`parked` arrives with the worker).
-- `charges (id bigserial, stripe_id, order_id, idempotency_key, amount_cents, created_at)`: `idempotency_key` is deliberately **not** unique, and `id` is a serial rather than derived from the key: payments dedups under an advisory lock, so the race flag has something to break, and a second charge for an order shows up as a second row.
-- `ledger_entries` arrives with the worker (step 4).
+- `checkout.orders (id, idempotency_key unique, amount_cents, status, created_at, updated_at)`: `id` is `ord_` + the key; status is `pending`, `paid` or `failed` (`parked` arrives with the worker).
+- `payments.charges (id bigserial, stripe_id, order_id, idempotency_key, amount_cents, created_at)`: `idempotency_key` is deliberately **not** unique, and `id` is a serial rather than derived from the key: payments dedups under an advisory lock, so the race flag has something to break, and a second charge for an order shows up as a second row.
+- The worker's `ledger_entries` arrive in step 4.
 
 Every trial gets a fresh system, so checks query the tables directly; there is no run tagging. Order ids and processor charge ids derive from the idempotency key, and fakestripe's latency jitter from a hash of the key. The only randomness is retry jitter and the race flag below.
 
@@ -154,14 +154,14 @@ The load never judges; it exits 0 if it sent its requests, whatever the response
 
 ## The shop's own test suite
 
-What a decent team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; tests that need Postgres start it with testcontainers (one container per package, a fresh database per test), so they need Docker and nothing else. CI (`.github/workflows/pr-shop.yml`) runs it, and also starts the compose system and sends 60 s of traffic, then checks that no order is left pending or charged twice.
+What a strong team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; tests that need Postgres start it with testcontainers (one container per package, a fresh database per test), so they need Docker and nothing else. CI (`.github/workflows/pr-shop.yml`) runs it, and also starts the compose system and sends 60 s of traffic, then checks that no order is left pending or charged twice.
 
 | Layer | Covers |
 |---|---|
 | Unit, mocked dependencies | Order creation and idempotent repeat; each payments outcome (2xx → paid, 4xx → failed, refused → failed, timeout → pending); retry policy (attempt count, same key, which errors retry); reconciler picks up a pending order and resolves it; fraud boundary (100000 allowed, 100001 denied); payments dedup returns the existing charge; load shedding returns 503 above the limit; worker writes two balanced entries and acks; a message failing 3 times is dead-lettered and its order parked |
-| Integration, real Postgres (RabbitMQ from step 4) | Create order → paid → one charge (→ two ledger entries, step 4); a repeated key returns the same order; ten concurrent submits of one key make one order and one charge; an order whose payment timed out stays pending and the reconciler pays it with one charge; an over-limit order fails with no charge (step 2) |
+| Integration (`integration/`): the services over real HTTP, real Postgres, nothing mocked (RabbitMQ from step 4) | Each order path end to end, checked in checkout's API, payments' records and the processor: paid with one charge (→ two ledger entries, step 4); a repeated key returns the same order; ten simultaneous submits of one key make one order and one charge; payments unreachable → failed, no charge; payments shedding every attempt → failed, no charge; a timed-out call that charged anyway → pending, then reconciled with one charge; processor down → pending, then reconciled once it's back; a client retry racing the reconciler → one charge; an over-limit order fails with no charge (step 2) |
 
-CI runs the suite once per bug flag with the flag on. A flag that makes any test fail is disqualified as a demonstration and must be rewritten or dropped. Where a bug's realistic version changes a test along with the code (`TIMEOUT_AS_FAILURE`, `RETRY_NO_BACKOFF`, `NO_SHEDDING`, `REQUEUE_FOREVER`), the flag carries that test change too, the way the PR would.
+CI runs the suite once per bug flag with the flag on. A flag that makes any test fail is disqualified as a demonstration and must be rewritten or dropped. Where a bug's realistic version changes a test along with the code (`RETRY_NO_BACKOFF`, `NO_SHEDDING`, `REQUEUE_FOREVER`), the flag carries that test change too, the way the PR would, as long as the change is one a reviewer would plausibly accept.
 
 ---
 
@@ -177,8 +177,8 @@ Each is a mistake a reasonable developer could make in a reviewed PR, and must p
 
 | Flag | Service | The change | Why ordinary tests miss it |
 |---|---|---|---|
-| `SHOP_BUG_RETRY_NEW_KEY` | checkout | The reconciler builds a fresh idempotency key when it re-sends a pending order; normal retries still reuse the key | Reconciler tests mock payments; the double charge needs a call that timed out at checkout but completed at payments |
-| `SHOP_BUG_TIMEOUT_AS_FAILURE` | checkout | A timeout is treated as "definitely not charged": the order is marked `failed` instead of left `pending`. The unit test is changed to match, because the developer believes it | The test asserts the new behaviour; only real latency lets payments complete after checkout gave up |
+| `SHOP_BUG_RETRY_NEW_KEY` | checkout | The reconciler builds a fresh idempotency key when it re-sends a pending order; normal retries still reuse the key | **Disqualified as drafted:** the integration tests for a timed-out order and for a retry racing the reconciler catch it. Redesign or drop in step 2 |
+| `SHOP_BUG_TIMEOUT_AS_FAILURE` | checkout | A timeout is treated as "definitely not charged": the order is marked `failed` instead of left `pending` | **Disqualified as drafted:** three integration tests catch it (timed-out order, processor outage, retry racing the reconciler), and a PR would have to rewrite all three against their own intent. Redesign or drop in step 2 |
 | `SHOP_BUG_NO_DEADLINE_PROPAGATION` | checkout | Database queries use `context.Background()` instead of the request context | Results are identical; it only matters when requests are abandoned under a slow database |
 | `SHOP_BUG_UNBOUNDED_RETRY_QUEUE` | checkout | Failed payment calls are also queued in memory for a background retry, with no bound | Correct results; memory only grows during a sustained outage |
 | `SHOP_BUG_RETRY_NO_BACKOFF` | checkout | "Payments is flaky, retry harder": up to 10 attempts, no backoff | Retry tests mock payments and pass; the harm is load on a struggling dependency |
@@ -285,13 +285,13 @@ examples/shop/
   go.mod                  # own module, so the example reads like a customer repo
   docker-compose.yml
   load/traffic.js         # the k6 template, edited
-  db/schema.sql
   k8s/rendered/           # raw manifests for K3s (step 4)
   cmd/<service>/          # each service's main
-  services/<service>/     # each service's code, tests and Dockerfile:
+  services/<service>/     # each service's code, tests, Dockerfile and schema.sql:
                           #   checkout, payments, fakestripe; fraud (step 2); worker (step 4)
   internal/svc/           # env-var config helpers
   internal/db/            # the Postgres pool; dbtest/ makes a fresh database per test
+  integration/            # tests across services: checkout, payments and fakestripe together
   proto/fraud.proto
 ```
 
@@ -304,7 +304,7 @@ A separate Go module keeps the services' dependencies out of Kazu's `go.mod`, an
 | Step | Shop adds | Rows |
 |---|---|---|
 | 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, `load/traffic.js`, the shop test suite; `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3 |
-| 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC), `RETRY_NEW_KEY`, `TIMEOUT_AS_FAILURE`; the per-flag test run | V1, V2 |
+| 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC); the per-flag test run; redesign or replace `RETRY_NEW_KEY` and `TIMEOUT_AS_FAILURE`, which the integration suite catches (V1, V2 and the quickstart use them; mechanics rows S1, S4 and S12 can keep them, since those rows test Kazu, not the bug) | V1, V2 |
 | 3 | `NO_DEADLINE_PROPAGATION`, `SHARED_POOL`, `RACE_P`, `NO_SHEDDING`, `SCHEMA_V2` trap, `expectations.yaml` asserter | V3, V6, V9, V10, S4–S9 |
 | 4 | `worker`, `rabbitmq`, `otel-collector` and telemetry, `UNBOUNDED_RETRY_QUEUE`, `RETRY_NO_BACKOFF`, `POOL_LEAK`, `NO_RECONNECT`, `ACK_BEFORE_WRITE`, `REQUEUE_FOREVER`, `NO_OTEL` trap, `k8s/rendered/` | V4, V5, V7, V8, V11, V12, S10–S13 |
 

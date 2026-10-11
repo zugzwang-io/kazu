@@ -12,6 +12,7 @@ import (
 
 type Config struct {
 	URL              string
+	Schema           string        // the service's Postgres schema; sets search_path
 	PoolSize         int           // 10
 	AcquireTimeout   time.Duration // 500ms
 	StatementTimeout time.Duration // 2s
@@ -33,6 +34,9 @@ func Open(ctx context.Context, c Config) (*DB, error) {
 	}
 	cfg.MaxConns = int32(c.PoolSize)
 	cfg.HealthCheckPeriod = time.Second
+	if c.Schema != "" {
+		cfg.ConnConfig.RuntimeParams["search_path"] = c.Schema
+	}
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.Itoa(int(c.StatementTimeout.Milliseconds()))
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

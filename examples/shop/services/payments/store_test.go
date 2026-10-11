@@ -11,7 +11,7 @@ import (
 )
 
 func TestPGStoreRecordsOneChargePerKey(t *testing.T) {
-	s := PGStore{DB: dbtest.Open(t)}
+	s := PGStore{DB: dbtest.Open(t, "payments")}
 	ctx := context.Background()
 
 	if _, err := s.Find(ctx, "k"); !errors.Is(err, ErrNotFound) {
