@@ -11,7 +11,7 @@ import (
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	(&Server{}).Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if rec.Code != http.StatusCreated { // CANARY: wrong on purpose
+	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /healthz: %d", rec.Code)
 	}
 }
