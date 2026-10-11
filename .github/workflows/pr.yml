@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ["."]
+        module: [".", examples/shop]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -26,3 +26,36 @@ jobs:
         with:
           version: v2.1.6
           working-directory: ${{ matrix.module }}
+
+  shop-test:
+    name: shop test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/shop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: examples/shop/go.mod
+          cache: false
+      - run: go test -race -count=1 ./...
+
+  # Every shop service's Dockerfile builds. Whether the images run is checked
+  # by compose, once the whole system is in.
+  shop-images:
+    name: shop images
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/shop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build every service image
+        run: |
+          for f in services/*/Dockerfile; do
+            svc=$(basename "$(dirname "$f")")
+            echo "::group::$svc"
+            docker build -f "$f" -t "shop-$svc" . || { echo "::error title=docker build::$svc failed"; exit 1; }
+            echo "::endgroup::"
+          done
