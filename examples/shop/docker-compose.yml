@@ -42,7 +42,7 @@ services:
     build: { context: ., dockerfile: services/checkout/Dockerfile }
     environment:
       DATABASE_URL: postgres://postgres:dev@postgres:5432/shop
-      PAYMENTS_URL: http://payments:8081
+      PAYMENTS_URL: http://payments:9999
     depends_on:
       migrate: { condition: service_completed_successfully }
       payments: { condition: service_healthy }

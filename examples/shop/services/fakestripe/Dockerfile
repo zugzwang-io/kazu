@@ -5,7 +5,7 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY internal/ internal/
 COPY services/fakestripe/ services/fakestripe/
-COPY cmd/nope/ cmd/fakestripe/
+COPY cmd/fakestripe/ cmd/fakestripe/
 RUN CGO_ENABLED=0 go build -trimpath -o /fakestripe ./cmd/fakestripe
 
 # alpine rather than scratch, for wget in the compose healthcheck.
