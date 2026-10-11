@@ -1,0 +1,12 @@
+# golangci-lint's standard linters (errcheck, govet, ineffassign, staticcheck,
+# unused) plus gofmt. Add linters when a real need shows up.
+version: "2"
+
+linters:
+  exclusions:
+    presets:
+      - std-error-handling # unchecked Close, Flush and the like
+
+formatters:
+  enable:
+    - gofmt
