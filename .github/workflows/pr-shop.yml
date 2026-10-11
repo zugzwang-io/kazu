@@ -23,18 +23,38 @@ jobs:
       # Tests that need Postgres start it themselves (dbtest, testcontainers).
       - run: go test -race -count=1 ./...
 
-  # Every shop service's Dockerfile builds. Whether the images run is checked
-  # by compose, once the whole system is in.
-  shop-images:
-    name: shop images
+  # The whole system in its real images, built from every service's
+  # Dockerfile: every healthcheck passes, and one
+  # order goes through checkout → payments → fakestripe end to end. This
+  # checks the wiring (names, ports, env vars, schemas); correctness under
+  # load is Kazu's job.
+  shop-smoke:
+    name: shop smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build every service image
+      - name: Start the system
         run: |
-          for f in services/*/Dockerfile; do
-            svc=$(basename "$(dirname "$f")")
-            echo "::group::$svc"
-            docker build -f "$f" -t "shop-$svc" . || { echo "::error title=docker build::$svc failed"; exit 1; }
-            echo "::endgroup::"
+          docker compose up -d --build --wait --wait-timeout 180 checkout > up.log 2>&1 && exit 0
+          cat up.log
+          echo "::error title=compose up::$(tail -n 25 up.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+          exit 1
+      - name: Place one order
+        run: |
+          resp=$(curl -sS -X POST localhost:8080/orders -H 'Idempotency-Key: smoke-1' -d '{"amount_cents": 1500}')
+          echo "$resp"
+          echo "$resp" | grep -q '"status":"paid"' || { echo "::error title=smoke::order not paid: $resp"; exit 1; }
+          n=$(docker compose exec -T postgres psql -U postgres -d shop -tAc "select count(*) from payments.charges where order_id = 'ord_smoke-1'")
+          [ "$n" = 1 ] || { echo "::error title=smoke::$n charges for the order, want 1"; exit 1; }
+      - name: Logs
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color
+          enc() { sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g'; }
+          echo "::error title=compose ps::$(docker compose ps -a --format '{{.Service}} {{.State}} {{.Status}}' | enc)"
+          for svc in migrate fakestripe payments checkout; do
+            echo "::error title=$svc logs::$(docker compose logs --no-color --tail 15 $svc 2>&1 | enc)"
           done
+      - run: docker compose down -v
+        if: always()

@@ -154,7 +154,7 @@ The load never judges; it exits 0 if it sent its requests, whatever the response
 
 ## The shop's own test suite
 
-What a strong team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; tests that need Postgres start it with testcontainers (one container per package, a fresh database per test), so they need Docker and nothing else. CI (`.github/workflows/pr-shop.yml`) runs it, and also starts the compose system and sends 60 s of traffic, then checks that no order is left pending or charged twice.
+What a strong team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; tests that need Postgres start it with testcontainers (one container per package, a fresh database per test), so they need Docker and nothing else. CI (`.github/workflows/pr-shop.yml`) runs it, builds every image, and starts the compose system to place one order end to end, which checks the wiring. Behaviour under load and faults is Kazu's job, starting with the no-fault baseline row V0.
 
 | Layer | Covers |
 |---|---|
@@ -303,7 +303,7 @@ A separate Go module keeps the services' dependencies out of Kazu's `go.mod`, an
 
 | Step | Shop adds | Rows |
 |---|---|---|
-| 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, `load/traffic.js`, the shop test suite; `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3 |
+| 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, the shop test suite; `load/traffic.js` with the Kazu config; `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3 |
 | 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC); the per-flag test run; redesign or replace `RETRY_NEW_KEY` and `TIMEOUT_AS_FAILURE`, which the integration suite catches (V1, V2 and the quickstart use them; mechanics rows S1, S4 and S12 can keep them, since those rows test Kazu, not the bug) | V1, V2 |
 | 3 | `NO_DEADLINE_PROPAGATION`, `SHARED_POOL`, `RACE_P`, `NO_SHEDDING`, `SCHEMA_V2` trap, `expectations.yaml` asserter | V3, V6, V9, V10, S4–S9 |
 | 4 | `worker`, `rabbitmq`, `otel-collector` and telemetry, `UNBOUNDED_RETRY_QUEUE`, `RETRY_NO_BACKOFF`, `POOL_LEAK`, `NO_RECONNECT`, `ACK_BEFORE_WRITE`, `REQUEUE_FOREVER`, `NO_OTEL` trap, `k8s/rendered/` | V4, V5, V7, V8, V11, V12, S10–S13 |
