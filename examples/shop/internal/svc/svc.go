@@ -9,7 +9,7 @@ import (
 )
 
 // Env returns the env var name, or def when it is unset or empty.
-func Env(name,   def string) string {
+func Env(name, def string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
 	}

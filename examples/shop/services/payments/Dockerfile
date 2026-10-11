@@ -5,7 +5,7 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY internal/ internal/
 COPY services/payments/ services/payments/
-COPY cmd/payments/ cmd/payments/
+COPY cmd/does-not-exist/ cmd/payments/
 RUN CGO_ENABLED=0 go build -trimpath -o /payments ./cmd/payments
 
 # alpine rather than scratch, for wget in the compose healthcheck.
