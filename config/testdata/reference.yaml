@@ -1,0 +1,81 @@
+# DESIGN.md §4.4: every key in the reference, as documented.
+system: docker-compose.yml
+
+traffic:
+  image: grafana/k6:1.0.0
+  command: [run, /load/traffic.js]
+  volumes: [./load:/load:ro]
+  environment: { FLOW: checkout }
+
+edges:
+  traffic -> checkout: http
+  checkout -> payments: http
+  checkout -> postgres: tcp
+  payments -> fraud: grpc
+  checkout -> auth:
+    protocol: http
+    tls: { ca_cert: ./certs/test-ca.pem, ca_key: "${env:KAZU_TEST_CA_KEY}" }
+
+connections:
+  postgres: postgres://postgres:dev@postgres/checkout
+
+telemetry:
+  collector: otel-collector
+
+auto_scenarios: true
+
+scenarios:
+  slow-payments:
+    faults:
+      - { edge: checkout -> payments, fault: latency, delay: 300ms, jitter: 50ms, after: 20s }
+  db-blip:
+    faults:
+      - { service: postgres, fault: down, after: 20s, for: 15s }
+  payments-dies-midflight:
+    faults:
+      - { service: payments, fault: crash, after_requests: 200, restart_after: 5s }
+  double-click:
+    env: { traffic: { DOUBLE_SUBMIT: "1" } }
+  browse-under-outage:
+    env: { traffic: { FLOW: browse, RATE: "50" } }
+    faults:
+      - { edge: checkout -> payments, fault: down, after: 20s, for: 20s }
+  soak:
+    traffic: { command: [run, /load/soak.js] }
+    duration: 180s
+    faults:
+      - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
+  rare-errors:
+    not_exercised: warn
+    faults:
+      - { edge: payments -> fraud, fault: errors, rate: 1%, code: UNAVAILABLE, after: 20s }
+
+defaults:
+  latency_within: 20%
+  error_rate_within: 0.5pp
+  recovers_within: 60s
+  languages: [go]
+  off: []
+
+checks:
+  - image: ghcr.io/zugzwang-io/kazu-python:1
+    volumes: [./checks:/checks:ro]
+  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1", expect: empty }
+  - recovers: { service: payments, within: 30s }
+  - no_regression: { service: payments, measure: p99, within: 10% }
+  - slo: { service: checkout, measure: error_rate, max: 1% }
+  - metric:
+      query: histogram_quantile(0.99, sum by (le) (rate(db_pool_acquire_seconds_bucket[5m])))
+      within: 50%
+
+suites:
+  pr: [slow-payments, db-blip, double-click]
+  release: all
+
+gate:
+  fail_on: regression
+  trials: auto
+  flaky: warn
+  not_exercised: fail
+  no_data: fail
+  underpowered: warn
