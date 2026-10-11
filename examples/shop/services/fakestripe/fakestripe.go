@@ -67,6 +67,7 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 		span := 2*int64(s.Jitter) + 1
 		delay += time.Duration(int64(binary.BigEndian.Uint64(sum[8:16])%uint64(span)) - int64(s.Jitter))
 	}
+	delay = max(delay, 0) // only matters if Jitter > Latency
 	time.Sleep(delay)
 
 	w.Header().Set("Content-Type", "application/json")
