@@ -1,8 +1,20 @@
 # golangci-lint's standard linters (errcheck, govet, ineffassign, staticcheck,
-# unused) plus gofmt. Add linters when a real need shows up.
+# unused), a few that catch real bugs in networked code, and gofmt. Add more
+# when a real need shows up.
 version: "2"
 
 linters:
+  enable:
+    - bodyclose  # HTTP response bodies left open leak connections
+    - noctx      # HTTP requests without a context can't time out or be cancelled
+    - errorlint  # wrap errors with %w and compare them with errors.Is/As
+    - exhaustive # switches over enum-like constants cover every value
+    - nolintlint # every //nolint names the linter it silences
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    nolintlint:
+      require-specific: true
   exclusions:
     presets:
       - std-error-handling # unchecked Close, Flush and the like
