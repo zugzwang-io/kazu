@@ -1,0 +1,86 @@
+# The shop's own checks, with no Kazu involved: its test suite, and a smoke run
+# of the compose system under the k6 traffic.
+name: shop
+
+on:
+  pull_request:
+    paths: [examples/shop/**, .github/workflows/shop.yml]
+  push:
+    branches: [main]
+    paths: [examples/shop/**, .github/workflows/shop.yml]
+
+defaults:
+  run:
+    working-directory: examples/shop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: dev, POSTGRES_DB: shop }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 1s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: examples/shop/go.mod
+          cache-dependency-path: examples/shop/go.sum
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+        env:
+          SHOP_TEST_DATABASE_URL: postgres://postgres:dev@localhost:5432/shop
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: |
+          docker build --progress=plain -t shop:dev . > build.log 2>&1 && exit 0
+          cat build.log
+          echo "::error title=docker build::$(tail -n 25 build.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+          exit 1
+      - name: Start the system
+        run: |
+          docker compose up -d --no-build
+          for i in $(seq 90); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' shop-checkout-1 2>/dev/null)" = healthy ] && exit 0
+            sleep 2
+          done
+          echo "checkout never became healthy"; exit 1
+      - name: Send 60 s of traffic
+        run: |
+          docker run --rm --network shop_default -v "$PWD/load:/load:ro" \
+            -e KAZU_SEED=1 -e KAZU_DURATION=60s -e DUPLICATE_RATE=0.05 \
+            grafana/k6:1.0.0 run --quiet /load/traffic.js
+      - name: Check the data
+        run: |
+          sleep 20 # longer than the reconciler's 10 s threshold plus a pass
+          q() { docker compose exec -T postgres psql -U postgres -d shop -tAc "$1"; }
+          q "select status, count(*) from orders group by 1"
+          fail=0
+          check() { n=$(q "$2"); echo "$1: $n"; [ "$n" = 0 ] || fail=1; }
+          check "orders still pending"           "select count(*) from orders where status = 'pending'"
+          check "orders charged more than once"  "select count(*) from (select order_id from charges group by 1 having count(*) > 1) x"
+          check "paid orders with no charge"     "select count(*) from orders o where status = 'paid' and not exists (select 1 from charges c where c.order_id = o.id)"
+          check "failed orders with a charge"    "select count(*) from orders o where status = 'failed' and exists (select 1 from charges c where c.order_id = o.id)"
+          exited=$(docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}}' | grep -v '^migrate ' | grep -vc ' running ' || true)
+          echo "services not running: $exited"; [ "$exited" = 0 ] || fail=1
+          exit $fail
+      - name: Logs
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color
+          # Also as annotations, readable from the checks API.
+          enc() { sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g'; }
+          echo "::error title=compose ps::$(docker compose ps -a --format '{{.Service}} {{.State}} {{.Status}}' | enc)"
+          for svc in migrate fakestripe payments checkout; do
+            echo "::error title=$svc logs::$(docker compose logs --no-color --tail 15 $svc 2>&1 | enc)"
+          done
+      - run: docker compose down -v
+        if: always()

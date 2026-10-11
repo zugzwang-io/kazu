@@ -8,20 +8,16 @@ A small checkout system with **realistic resilience mechanisms and bugs you can 
 
 It is laid out exactly like a customer repo (DESIGN.md §4.1): the **system** in `docker-compose.yml`, **traffic** as the k6 template, **checks** in `checks/` for Kazu's Python SDK image, and **`kazu.yaml`**. It follows the packaging rules Kazu asks of customers, which are Antithesis's rules: a complete, isolated system, no outbound internet, services reach each other by name.
 
-Status: spec only. Code lands in follow-up PRs, one per build step.
+Status: build step 1 in progress. `checkout`, `payments`, `fakestripe`, the schema, compose, the traffic script and the shop's own tests exist; Kazu config and checks come later.
 
 ---
 
-## Ground rules: no self-deception
-
-The shop exists to show that Kazu finds problems real teams would otherwise ship. It is easy to fake that by planting a bug and then writing a check that only makes sense if you know about it. From step 2, when the first bug flags are coded:
+## Ground rules
 
 1. **Every bug must pass the shop's own test suite**, the tests a decent team writes. A bug ordinary tests catch doesn't demonstrate anything.
-2. **Checks and scenarios are written blind:** by someone who knows the shop's design and business rules but not the bug list. Bug definitions are committed before they are written, and nobody who knows the bugs edits them.
-3. **Value and safety are measured separately.** *Value rows* use only the blind config and measure what Kazu catches. *Safety rows* test Kazu's own mechanics with configs written for the test.
-4. **Misses are recorded, not patched.** Outcomes come from real runs. A miss is fixed only by a generic Kazu improvement that helps every customer, never by a shop-specific check.
+2. **Misses are recorded, not patched.** Outcomes come from real runs. A miss is fixed only by a generic Kazu improvement that helps every customer, never by a shop-specific check.
 
-The headline number is the **catch rate** over value rows, from real runs.
+The shop's checks are written by people who know its bugs, so the shop tests Kazu's mechanics; its catch rate is not evidence of what Kazu finds on real systems. That evidence comes from dogfooding.
 
 ---
 
@@ -38,7 +34,7 @@ Keep it boring. Realistic enough to fail the way real systems fail, and no more.
 
 ## Business rules
 
-From the product spec; the blind authors in step 2 get these, not the bug list:
+From the product spec. Rule 5 arrives with the worker (step 4) and rule 6 with fraud (step 2).
 
 1. One order per idempotency key.
 2. A customer is charged at most once per order.
@@ -51,7 +47,7 @@ From the product spec; the blind authors in step 2 get these, not the bug list:
 
 ## Services
 
-All services are Go. Services find each other **by name** (`payments`, `postgres`, ...), read from env vars with those names as defaults.
+All services are Go, built into **one binary and one image** (`shop:${TAG}`); compose picks the service with `command` (`shop checkout`, `shop payments`, ...). One tag per side keeps base and head simple. Services find each other **by name** (`payments`, `postgres`, ...), read from env vars with those names as defaults.
 
 | Service | Protocol | Port | Calls | Arrives in build step |
 |---|---|---|---|---|
@@ -72,9 +68,9 @@ Each is a standard library or pattern a real Go service uses, with one env var t
 |---|---|---|
 | Database pools | `pgxpool` | 10 connections per service, 500 ms acquire timeout, redials after failures |
 | Timeouts | `net/http` client; Postgres `statement_timeout`; request context passed to every downstream call and query | 1 s per payments attempt; 2 s per query; deadlines flow downstream |
-| Retries | `cenkalti/backoff` | Exponential backoff with full jitter, max 3 attempts, same idempotency key; only timeouts, 5xx and refused connections |
+| Retries | `cenkalti/backoff` | Exponential backoff with full jitter (100 ms base), max 3 attempts, same idempotency key; only timeouts, resets, 5xx and refused connections |
 | Reconciler | Goroutine in checkout | Every 5 s, re-sends orders pending > 10 s with their original key |
-| Load shedding | Concurrency limit in payments (`x/sync/semaphore`) | 20 requests in flight; beyond that, an immediate 503 |
+| Load shedding | Concurrency limit in payments (a buffered channel) | 20 requests in flight; beyond that, an immediate 503 |
 | Queue consumption | RabbitMQ prefetch, dead-letter exchange | Prefetch 10; after 3 failed deliveries → dead-letter queue, order marked `parked` |
 | Realistic capacity | `fakestripe` responds in 200 ms ± 50 ms, like a real card processor; every request does real database work | Payments capacity ≈ 20 in flight / ~0.25 s ≈ 80 charges/s, set by limits and latencies rather than runner CPU, so it is the same on every machine |
 
@@ -84,7 +80,7 @@ The default traffic (100 iterations/s, 70% checkout) puts payments near 70 charg
 
 | Endpoint | Behaviour |
 |---|---|
-| `POST /orders` | Body `{amount_cents}`, header `Idempotency-Key` (required). Inserts an order as `pending` and calls `POST /charges` on payments with the timeout and retry policy above. **2xx** → `paid`; **4xx or connection refused** (definitely not processed) → `failed`; **timeout or connection reset** (outcome unknown) → stays `pending` for the reconciler. Publishes `order.paid` (step 4). A repeat of the same key returns the existing order, resuming the payment call if it is still `pending`. |
+| `POST /orders` | Body `{amount_cents}`, header `Idempotency-Key` (required). Inserts an order as `pending` and calls `POST /charges` on payments with the timeout and retry policy above. **2xx** → `paid`; **4xx, or every attempt refused or shed with 503** (definitely not processed) → `failed`; **any attempt timed out, reset or got another 5xx** (outcome unknown) → stays `pending` for the reconciler. Responds 200 with the order, or 202 while it is still pending. Publishes `order.paid` (step 4). A repeat of the same key returns the existing order, resuming the payment call if it is still `pending`. |
 | `GET /orders/{id}` | The order. |
 | `GET /orders?status=` | Orders filtered by status. |
 | `GET /healthz` | 200 once the database is reachable. |
@@ -93,7 +89,7 @@ The default traffic (100 iterations/s, 70% checkout) puts payments near 70 charg
 
 | Endpoint | Behaviour |
 |---|---|
-| `POST /charges` | Body `{order_id, amount_cents}`, header `Idempotency-Key`. Step 2+: calls `fraud.Check` for orders of 1,000 cents or more (denied → 402). Deduplicates on `idempotency_key` under a Postgres advisory lock (lock, look up, insert if absent), so a repeat returns the existing charge. Calls `fakestripe` `POST /v1/charges` with the same key. Load shedding as above. |
+| `POST /charges` | Body `{order_id, amount_cents}`, header `Idempotency-Key`. Load shedding as above. Step 2+: calls `fraud.Check` for orders of 1,000 cents or more (denied → 402). Returns the existing charge if the key has one; otherwise calls `fakestripe` `POST /v1/charges` with the same key (processor failure → 502), then records the charge under a Postgres advisory lock on the key (lock, look up, insert if absent), so concurrent repeats record one charge. |
 | `GET /healthz` | 200 once the database is reachable. |
 
 ### `fraud` (gRPC)
@@ -112,35 +108,13 @@ HTTPS with the test CA in `certs/`. `POST /v1/charges` responds in 200 ms ± 50 
 
 ## Data
 
-`db/schema.sql`, one database `shop`, applied by an init container (compose) or init Job (Kubernetes):
+`db/schema.sql`, one database `shop`, applied by the `migrate` one-shot job (compose) or an init Job (Kubernetes):
 
-```sql
-create table orders (
-  id              text primary key,         -- derived from idempotency key
-  idempotency_key text not null unique,
-  amount_cents    bigint not null,
-  status          text not null check (status in ('pending','paid','failed','parked')),
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now()
-);
+- `orders (id, idempotency_key unique, amount_cents, status, created_at, updated_at)`: `id` is `ord_` + the key; status is `pending`, `paid` or `failed` (`parked` arrives with the worker).
+- `charges (id bigserial, stripe_id, order_id, idempotency_key, amount_cents, created_at)`: `idempotency_key` is deliberately **not** unique, and `id` is a serial rather than derived from the key: payments dedups under an advisory lock, so the race flag has something to break, and a second charge for an order shows up as a second row.
+- `ledger_entries` arrives with the worker (step 4).
 
-create table charges (
-  id              text primary key,
-  order_id        text not null,
-  idempotency_key text not null,           -- deliberately not unique: payments dedups under an
-  amount_cents    bigint not null,          -- advisory lock, so the race flag has something to break
-  created_at      timestamptz not null default now()
-);
-
-create table ledger_entries (
-  id           bigserial primary key,
-  order_id     text not null,
-  account      text not null,
-  amount_cents bigint not null              -- signed; per order sums to 0
-);
-```
-
-Every trial gets a fresh system, so checks query the tables directly; there is no run tagging. Order and charge ids derive from the idempotency key; services use no randomness of their own, except the race flag below.
+Every trial gets a fresh system, so checks query the tables directly; there is no run tagging. Order ids and processor charge ids derive from the idempotency key, and fakestripe's latency jitter from a hash of the key. The only randomness is retry jitter and the race flag below.
 
 ---
 
@@ -168,23 +142,24 @@ Every service uses the standard OpenTelemetry Go SDK and exports over OTLP to `O
 | Env var | Set by | Effect |
 |---|---|---|
 | `KAZU_SEED` | Kazu | Idempotency keys and amounts derive from it, so base and head send the same sequence. Amounts: about 70% below 1,000 cents, 30% at or above (so the fraud edge is exercised), and about 1% above the fraud limit |
-| `KAZU_DURATION` | Kazu | Per scenario; the blind config sets `duration: 90s` on its own scenarios |
-| `FLOW` | `kazu.yaml` | Weighted mix: `checkout` (create an order, then read it) and `browse` (read existing orders). Blind config: `checkout:7,browse:3` |
+| `KAZU_DURATION` | Kazu | Per scenario |
+| `FLOW` | `kazu.yaml` | Weighted mix: `checkout` (create an order, then read it) and `browse` (read paid orders). Default `checkout:7,browse:3` |
 | `RATE` | template default | 100 iterations/s |
-| `DUPLICATE_RATE` | `kazu.yaml` | Fraction of orders submitted twice at once with the same key, like double-clicks. Blind config: 0.05, and 0.3 in `double_click` |
+| `DUPLICATE_RATE` | `kazu.yaml` | Fraction of orders submitted twice at once with the same key, like double-clicks. Default 0; the shop's config will use 0.05, and 0.3 in `double_click` |
+| `CHECKOUT_URL` | — | Default `http://checkout:8080` |
 
-The load never judges; it exits 0 if it sent its requests, whatever the responses were.
+The load never judges; it exits 0 if it sent its requests, whatever the responses were. Requests time out after 10 s.
 
 ---
 
 ## The shop's own test suite
 
-What a decent team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module, against a real Postgres for integration tests.
+What a decent team would have before Kazu, and the bar every bug must clear (ground rule 1). It runs with `go test ./...` in the shop's module; integration tests need `SHOP_TEST_DATABASE_URL` (a database they may wipe) and are skipped without it. CI (`.github/workflows/shop.yml`) runs it against a Postgres service container, and also starts the compose system and sends 60 s of traffic, then checks that no order is left pending or charged twice.
 
 | Layer | Covers |
 |---|---|
 | Unit, mocked dependencies | Order creation and idempotent repeat; each payments outcome (2xx → paid, 4xx → failed, refused → failed, timeout → pending); retry policy (attempt count, same key, which errors retry); reconciler picks up a pending order and resolves it; fraud boundary (100000 allowed, 100001 denied); payments dedup returns the existing charge; load shedding returns 503 above the limit; worker writes two balanced entries and acks; a message failing 3 times is dead-lettered and its order parked |
-| Integration, real Postgres and RabbitMQ, happy path | Create order → paid → one charge → two ledger entries; a repeated key returns the same order; an over-limit order fails with no charge |
+| Integration, real Postgres (RabbitMQ from step 4) | Create order → paid → one charge (→ two ledger entries, step 4); a repeated key returns the same order; ten concurrent submits of one key make one order and one charge; an order whose payment timed out stays pending and the reconciler pays it with one charge; an over-limit order fails with no charge (step 2) |
 
 CI runs the suite once per bug flag with the flag on. A flag that makes any test fail is disqualified as a demonstration and must be rewritten or dropped. Where a bug's realistic version changes a test along with the code (`TIMEOUT_AS_FAILURE`, `RETRY_NO_BACKOFF`, `NO_SHEDDING`, `REQUEUE_FOREVER`), the flag carries that test change too, the way the PR would.
 
@@ -198,7 +173,7 @@ Each flag is an env var read at startup, passed through compose interpolation (`
 kazu run payments_slow --base TAG=dev --head TAG=dev --head SHOP_BUG_TIMEOUT_AS_FAILURE=1
 ```
 
-Each is a mistake a reasonable developer could make in a reviewed PR, and must pass the test suite above. These are draft definitions; they are finalised and committed at the start of step 2, before any blind authoring (ground rule 2).
+Each is a mistake a reasonable developer could make in a reviewed PR, and must pass the test suite above. These are draft definitions, finalised as each flag is coded.
 
 | Flag | Service | The change | Why ordinary tests miss it |
 |---|---|---|---|
@@ -219,7 +194,7 @@ Removed from earlier drafts because ordinary tests catch them: `NO_TIMEOUT` (lin
 
 ### Traps
 
-Off by default. These exist for safety rows: they test Kazu's own safety checks, not the shop.
+Off by default. These exist for the mechanics rows: they test Kazu's own safety checks, not the shop.
 
 | Trap | What it does | What Kazu must do |
 |---|---|---|
@@ -229,9 +204,9 @@ Off by default. These exist for safety rows: they test Kazu's own safety checks,
 
 ---
 
-## Value matrix
+## Bug rows
 
-Run with the blind config (written in step 2) and every scenario. Base has no flags; head has one. Outcomes are **recorded from real runs**, not predicted: for each row, whether it was caught and by which check. A catch counts only if the check that fired matches the bug's harm; a check that fires because head is *better* than base is recorded as spurious and not counted.
+Run with the shop's `kazu.yaml` and every scenario. Base has no flags; head has one. Outcomes are **recorded from real runs**, not predicted: for each row, whether it was caught and by which check. A catch counts only if the check that fired matches the bug's harm; a check that fires because head is *better* than base is recorded as spurious and not counted.
 
 | # | Head flag | Harm a check should detect | Step |
 |---|---|---|---|
@@ -249,13 +224,13 @@ Run with the blind config (written in step 2) and every scenario. Base has no fl
 | V11 | `ACK_BEFORE_WRITE` | paid orders with missing ledger entries after a worker crash | 4 |
 | V12 | `REQUEUE_FOREVER` | a message that can never succeed blocks or starves the queue | 4 |
 
-Amplified parameters, chosen so a bug shows up within a ~90 s trial, are disclosed next to the catch rate: the 50 ms ack gap (V11), the 5 s connection hold (V7), and the race probability used for gating (V9).
+Amplified parameters, chosen so a bug shows up within a ~90 s trial: the 50 ms ack gap (V11), the 5 s connection hold (V7), and the race probability used for gating (V9).
 
 ---
 
-## Safety matrix
+## Mechanics rows
 
-Configs written for the test (in `safety/`), allowed to be targeted because they test Kazu's mechanics, not its value.
+Configs written for the test (in `safety/`), each targeting one of Kazu's own mechanics.
 
 | # | Base | Head | Scenario | Expected | Tests | Step |
 |---|---|---|---|---|---|---|
@@ -281,8 +256,7 @@ Every Kazu PR runs the shop as a customer would (DESIGN.md §8, "Testing Kazu"):
 
 1. **Shop test suite per bug flag:** every flag must pass the shop's own tests (ground rule 1).
 2. **Shop bug proofs:** each flag also has a plain Go test showing the bug happens without Kazu (for example, `TIMEOUT_AS_FAILURE` against a slow payments that completes leaves a charge on a failed order), so a failing row says whether the shop or Kazu broke.
-3. **Value and safety matrices:** a small Go asserter, not Kazu, compares each row's JSON result with `expectations.yaml`. Any mismatch blocks the merge, including a recorded miss that is suddenly caught (update the record deliberately) or a caught bug that is suddenly missed (a Kazu regression).
-4. **Catch rate** over value rows is printed in the job summary.
+3. **Bug and mechanics rows:** a small Go asserter, not Kazu, compares each row's JSON result with `expectations.yaml`. Any mismatch blocks the merge, including a recorded miss that is suddenly caught (update the record deliberately) or a caught bug that is suddenly missed (a Kazu regression).
 
 Statistical rows are made decisive for gating: V9 uses a race probability high enough that detection is near certain, S5 asserts "flaky, not regressed" with a wide margin, and S7's 20 repeats run as 20 shards.
 
@@ -290,7 +264,6 @@ Statistical rows are made decisive for gating: V9 uses a race probability high e
 
 ```yaml
 - id: V2
-  kind: value
   head: { SHOP_BUG_TIMEOUT_AS_FAILURE: "1" }
   recorded:                     # from the first real run; changes are deliberate
     caught_by: [failed_orders_have_no_charge]
@@ -305,18 +278,22 @@ Each row runs with a fixed `--seed`, so a failing row prints the `kazu replay` c
 ```
 examples/shop/
   SPEC.md                 # this file
-  kazu.yaml               # written blind (step 2)
-  checks/shop.py          # written blind (step 2); mounted into the kazu-python SDK image
-  safety/                 # targeted configs for the safety matrix
-  expectations.yaml       # value and safety matrices
+  kazu.yaml               # step 2
+  checks/shop.py          # step 2; mounted into the kazu-python SDK image
+  safety/                 # targeted configs for the mechanics rows
+  expectations.yaml       # recorded outcomes of every row
   go.mod                  # own module, so the example reads like a customer repo
+  Dockerfile              # one image for every service
   docker-compose.yml
   load/traffic.js         # the k6 template, edited
   db/schema.sql
-  certs/                  # test CA for fakestripe
+  certs/                  # test CA and fakestripe's certificate; gen.sh regenerates them
   k8s/rendered/           # raw manifests for K3s (step 4)
-  services/checkout/  services/payments/  services/fraud/
-  services/worker/    services/fakestripe/
+  cmd/shop/               # the binary: shop checkout|payments|fakestripe|healthcheck
+  internal/svc/           # shared plumbing: env config, database pool, serving
+  services/checkout/  services/payments/  services/fakestripe/
+  services/fraud/     services/worker/
+  integration/            # in-process tests against a real Postgres
   proto/fraud.proto
 ```
 
@@ -328,14 +305,24 @@ A separate Go module keeps the services' dependencies out of Kazu's `go.mod`, an
 
 | Step | Shop adds | Rows |
 |---|---|---|
-| 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, `load/traffic.js`, the shop test suite and its per-flag CI run, `PAYMENTS_BY_IP` trap | V0, S1–S3 |
-| 2 | Commit bug definitions; blind authoring of the shop's test suite and of `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC), `RETRY_NEW_KEY`, `TIMEOUT_AS_FAILURE` | V1, V2 |
+| 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, `load/traffic.js`, the shop test suite (PR 1); `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3 |
+| 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC), `RETRY_NEW_KEY`, `TIMEOUT_AS_FAILURE`; the per-flag test run | V1, V2 |
 | 3 | `NO_DEADLINE_PROPAGATION`, `SHARED_POOL`, `RACE_P`, `NO_SHEDDING`, `SCHEMA_V2` trap, `expectations.yaml` asserter | V3, V6, V9, V10, S4–S9 |
 | 4 | `worker`, `rabbitmq`, `otel-collector` and telemetry, `UNBOUNDED_RETRY_QUEUE`, `RETRY_NO_BACKOFF`, `POOL_LEAK`, `NO_RECONNECT`, `ACK_BEFORE_WRITE`, `REQUEUE_FOREVER`, `NO_OTEL` trap, `k8s/rendered/` | V4, V5, V7, V8, V11, V12, S10–S13 |
 
-Value rows run the whole blind config; until step 4, scenarios and checks Kazu can't yet support are marked as skipped in the record, not removed from the config.
+Bug rows run the shop's whole config; until step 4, scenarios and checks Kazu can't yet support are marked as skipped in the record, not removed from the config.
+
+## Behaviour decisions
+
+Choices that matter to a bug, recorded as the code makes them.
+
+- **Payments follows the caller's context while charging.** If checkout gives up, payments' call to fakestripe is cancelled, like any Go handler using the request context. Fakestripe still charges (a real processor doesn't notice the caller leaving), so the charge exists at the processor with no row yet; the retry with the same key gets the same processor charge back and records it.
+- **The charge row is written after the processor call**, under the advisory lock, on a context detached from the caller: once money has moved it is recorded even if the caller has gone.
+- **Checkout resolves an order on a detached context** for the same reason: a paid order is marked paid even if the client hung up.
+- **After retries run out, an order whose outcome is unknown stays `pending`** and the reconciler retries it with the same key every 5 s; there is no terminal "unknown" state. Orders whose every attempt was refused or shed fail.
 
 ## Open questions
 
 - Whether `blackhole` lands in step 1 or 2 of the proxy.
-- Behaviour to pin down before bug definitions are committed: whether a latency fault delays the request or the response, whether payments cancels when checkout disconnects, when the charge row is written relative to the card-processor call, what state an order ends in after retries run out, and whether the worker processes messages concurrently.
+- Whether a latency fault delays the request or the response (a Kazu proxy choice; decided in its PR).
+- Whether the worker processes messages concurrently (step 4).
