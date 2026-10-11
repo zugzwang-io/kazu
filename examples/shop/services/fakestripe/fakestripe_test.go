@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+func TestHealthz(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&Server{}).Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /healthz: %d", rec.Code)
+	}
+}
+
 func TestIdempotentWithRealisticLatency(t *testing.T) {
 	s := &Server{Latency: 20 * time.Millisecond, Jitter: 5 * time.Millisecond}
 	ids := map[string]bool{}
