@@ -15,6 +15,7 @@ import (
 func main() {
 	d, err := db.Open(context.Background(), db.Config{
 		URL:              svc.Env("DATABASE_URL", "postgres://postgres:dev@postgres:5432/shop"),
+		Schema:           "payments",
 		PoolSize:         svc.EnvInt("DB_POOL_SIZE", 10),
 		AcquireTimeout:   svc.EnvDuration("DB_ACQUIRE_TIMEOUT", 500*time.Millisecond),
 		StatementTimeout: svc.EnvDuration("DB_STATEMENT_TIMEOUT", 2*time.Second),

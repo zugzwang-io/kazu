@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -57,8 +58,10 @@ func server(t testing.TB) string {
 }
 
 // Open creates a fresh database on the package's Postgres container, applies
-// db/schema.sql, and drops the database when the test ends.
-func Open(t testing.TB) *db.DB {
+// the schema.sql of each named service (services/<name>/schema.sql), and
+// drops the database when the test ends. The returned pool's search_path
+// covers those services' schemas, so their unqualified queries work.
+func Open(t testing.TB, services ...string) *db.DB {
 	t.Helper()
 	admin := server(t)
 	ctx := context.Background()
@@ -80,7 +83,7 @@ func Open(t testing.TB) *db.DB {
 		t.Fatal(err)
 	}
 	u.Path = "/" + name
-	d, err := db.Open(ctx, db.Config{URL: u.String(), PoolSize: 20, AcquireTimeout: time.Second, StatementTimeout: 5 * time.Second})
+	d, err := db.Open(ctx, db.Config{URL: u.String(), Schema: strings.Join(services, ","), PoolSize: 20, AcquireTimeout: time.Second, StatementTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +95,17 @@ func Open(t testing.TB) *db.DB {
 		}
 	})
 
+	// Tests run in their own package's folder, so find the schemas relative
+	// to this file instead.
 	_, file, _, _ := runtime.Caller(0)
-	schema, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "..", "db", "schema.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.Pool.Exec(ctx, string(schema)); err != nil {
-		t.Fatal(err)
+	for _, svc := range services {
+		schema, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "..", "services", svc, "schema.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Pool.Exec(ctx, string(schema)); err != nil {
+			t.Fatalf("apply %s schema: %v", svc, err)
+		}
 	}
 	return d
 }
