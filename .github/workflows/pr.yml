@@ -1,12 +1,14 @@
-# Lints each Go module with the root .golangci.yml (golangci-lint finds it by
-# walking up from the module). A new module adds itself to the matrix.
-name: lint
+# Everything that runs on a PR into main, and so everything that must pass
+# before it merges. One file per trigger: add new checks here as jobs.
+name: pr
 
 on:
   pull_request:
     branches: [main]
 
 jobs:
+  # golangci-lint with the root .golangci.yml, once per Go module (it finds
+  # the config by walking up). A new module adds itself to the matrix.
   lint:
     name: lint (${{ matrix.module }})
     runs-on: ubuntu-latest
