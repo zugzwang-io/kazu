@@ -155,7 +155,7 @@ func TestOrderIsPaidWithOneCharge(t *testing.T) {
 	if code != http.StatusOK || o.Status != checkout.StatusPaid || o.AmountCents != 1500 {
 		t.Fatalf("got %d %+v", code, o)
 	}
-	s.want(t, o.ID, checkout.StatusPaid, 2, 1) // CANARY: wrong on purpose
+	s.want(t, o.ID, checkout.StatusPaid, 1, 1)
 }
 
 func TestRepeatedKeyReturnsSameOrder(t *testing.T) {
