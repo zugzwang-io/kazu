@@ -1,0 +1,41 @@
+# DESIGN.md §4.2: Priya's kazu.yaml.
+system: docker-compose.yml
+
+traffic:
+  image: grafana/k6:1.0.0
+  command: [run, /load/checkout.js]
+  volumes: [./load:/load:ro]
+
+edges:
+  traffic -> checkout: http
+  checkout -> payments: http
+  checkout -> postgres: tcp
+  payments -> stripe-mock: http
+
+connections:
+  postgres: postgres://postgres:dev@postgres/checkout
+
+telemetry: { collector: otel-collector }
+
+scenarios:
+  slow-payments:
+    faults:
+      - { edge: checkout -> payments, fault: latency, delay: 1500ms, jitter: 200ms, after: 20s }
+  db-blip:
+    faults:
+      - { service: postgres, fault: down, after: 20s, for: 15s }
+  stripe-errors:
+    faults:
+      - { edge: payments -> stripe-mock, fault: errors, rate: 10%, code: 503, after: 20s }
+  double-click:
+    env: { traffic: { DOUBLE_SUBMIT: "1" } }
+
+checks:
+  - image: ghcr.io/zugzwang-io/kazu-python:1
+    volumes: [./checks:/checks:ro]
+  - metric:
+      query: sum(increase(payment_attempts_total[5m])) / sum(increase(orders_created_total[5m]))
+      max: 3
+
+suites:
+  pr: [slow-payments, db-blip, double-click]

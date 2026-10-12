@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zugzwang-io.github.io/kazu/kazu.schema.json",
+  "title": "kazu.yaml",
+  "description": "Kazu configuration: the system, traffic, edges, scenarios, checks, suites and gate settings (DESIGN.md §4.4). Structure only; rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["system", "traffic"],
+  "properties": {
+    "system": {
+      "description": "The system under test: a compose file, or a directory of rendered Kubernetes manifests.",
+      "type": ["string", "object"],
+      "minLength": 1,
+      "additionalProperties": false,
+      "required": ["manifests"],
+      "properties": {
+        "manifests": { "type": "string", "minLength": 1 }
+      }
+    },
+    "traffic": {
+      "description": "A compose-style service that generates load. Kazu starts it once the system is ready.",
+      "$ref": "#/$defs/service",
+      "required": ["image"]
+    },
+    "edges": {
+      "description": "The only places faults can go, as \"caller -> callee\": protocol. Edges from traffic are user-facing.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/edgeName" },
+      "additionalProperties": {
+        "type": ["string", "object"],
+        "if": { "type": "string" },
+        "then": { "$ref": "#/$defs/protocol" },
+        "additionalProperties": false,
+        "required": ["protocol"],
+        "properties": {
+          "protocol": { "$ref": "#/$defs/protocol" },
+          "tls": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ca_cert", "ca_key"],
+            "properties": {
+              "ca_cert": { "type": "string", "minLength": 1 },
+              "ca_key": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "connections": {
+      "description": "What checks reach by name (run.sql, run.http): a connection URL per name.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "collector": {
+          "description": "An existing collector service, aliased to Kazu's OTLP receiver. Without it, Kazu sets OTEL_EXPORTER_OTLP_ENDPOINT on every service.",
+          "$ref": "#/$defs/name"
+        }
+      }
+    },
+    "auto_scenarios": {
+      "description": "Generate auto-crash-<service> and auto-down-<caller>-<callee> scenarios.",
+      "type": "boolean"
+    },
+    "scenarios": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/scenario" }
+    },
+    "defaults": {
+      "description": "The built-in checks: all on unless tuned or switched off.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latency_within": { "$ref": "#/$defs/percent" },
+        "error_rate_within": { "$ref": "#/$defs/percentagePoints" },
+        "recovers_within": { "$ref": "#/$defs/duration" },
+        "languages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["go", "java", "rust"] }
+        },
+        "off": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["crashes", "exits", "traffic_exit", "error_rate", "latency", "recovers"] }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "suites": {
+      "description": "Named sets of scenarios: a list of scenario names (\"auto\" for every auto scenario), or \"all\".",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": {
+        "type": ["array", "string"],
+        "if": { "type": "string" },
+        "then": { "const": "all" },
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": { "$ref": "#/$defs/name" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fail_on": { "enum": ["regression", "violation"] },
+        "trials": {
+          "type": ["string", "integer"],
+          "if": { "type": "string" },
+          "then": { "const": "auto" },
+          "minimum": 1
+        },
+        "flaky": { "$ref": "#/$defs/severity" },
+        "not_exercised": { "$ref": "#/$defs/severity" },
+        "no_data": { "$ref": "#/$defs/severity" },
+        "underpowered": { "$ref": "#/$defs/severity" }
+      }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "edgeName": {
+      "type": "string",
+      "pattern": "^ *[A-Za-z0-9][A-Za-z0-9_.-]* *-> *[A-Za-z0-9][A-Za-z0-9_.-]* *$"
+    },
+    "protocol": { "enum": ["tcp", "http", "grpc"] },
+    "severity": { "enum": ["fail", "warn"] },
+    "duration": {
+      "type": "string",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$"
+    },
+    "percent": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?%$"
+    },
+    "percentagePoints": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?pp$"
+    },
+    "bandwidth": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(bps|kbps|mbps|gbps)$"
+    },
+    "scalar": { "type": ["string", "number", "boolean"] },
+    "environment": {
+      "description": "Env vars, as a map or as a list of NAME=value.",
+      "type": ["object", "array"],
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/scalar" },
+      "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*=" }
+    },
+    "service": {
+      "description": "The compose service keys Kazu uses, with the same meaning.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "type": "string", "minLength": 1 },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "volumes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "environment": { "$ref": "#/$defs/environment" }
+      }
+    },
+    "scenario": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "faults": { "type": "array", "items": { "$ref": "#/$defs/fault" } },
+        "env": {
+          "description": "Env vars per service, for this scenario only. Kazu passes them through untouched.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "additionalProperties": { "$ref": "#/$defs/scalar" }
+          }
+        },
+        "traffic": {
+          "description": "Merged over the default traffic definition.",
+          "$ref": "#/$defs/service"
+        },
+        "duration": {
+          "description": "Overrides the computed KAZU_DURATION.",
+          "$ref": "#/$defs/duration"
+        },
+        "not_exercised": { "$ref": "#/$defs/severity" }
+      }
+    },
+    "fault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fault"],
+      "properties": {
+        "edge": { "$ref": "#/$defs/edgeName" },
+        "service": { "$ref": "#/$defs/name" },
+        "fault": {
+          "enum": ["latency", "down", "blackhole", "reset", "bandwidth", "errors", "timeout", "crash", "pause", "cpu", "memory", "disk_full"]
+        },
+        "delay": { "$ref": "#/$defs/duration" },
+        "jitter": { "$ref": "#/$defs/duration" },
+        "rate": { "$ref": "#/$defs/percent" },
+        "code": { "type": ["integer", "string"] },
+        "limit": { "$ref": "#/$defs/bandwidth" },
+        "load": { "$ref": "#/$defs/percent" },
+        "restart_after": { "$ref": "#/$defs/duration" },
+        "after": { "$ref": "#/$defs/duration" },
+        "after_requests": { "type": "integer", "minimum": 1 },
+        "for": { "$ref": "#/$defs/duration" }
+      },
+      "allOf": [
+        { "if": { "properties": { "fault": { "const": "latency" } } }, "then": { "required": ["delay"] } },
+        { "if": { "properties": { "fault": { "enum": ["reset", "timeout"] } } }, "then": { "required": ["rate"] } },
+        { "if": { "properties": { "fault": { "const": "errors" } } }, "then": { "required": ["rate", "code"] } },
+        { "if": { "properties": { "fault": { "const": "bandwidth" } } }, "then": { "required": ["limit"] } },
+        { "if": { "properties": { "fault": { "enum": ["cpu", "memory"] } } }, "then": { "required": ["load"] } }
+      ]
+    },
+    "check": {
+      "description": "One user check: exactly one of image, sql, http, recovers, no_regression, slo or metric, plus an optional name.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "image": { "type": "string", "minLength": 1 },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "volumes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "environment": { "$ref": "#/$defs/environment" },
+        "sql": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["on", "query", "expect"],
+          "properties": {
+            "on": { "$ref": "#/$defs/name" },
+            "query": { "type": "string", "minLength": 1 },
+            "expect": {
+              "description": "\"empty\" for no rows, or the single value the query must return.",
+              "$ref": "#/$defs/scalar"
+            }
+          }
+        },
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["on", "path", "expect"],
+          "properties": {
+            "on": { "$ref": "#/$defs/name" },
+            "method": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] },
+            "path": { "type": "string", "pattern": "^/" },
+            "expect": {
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+                "body": { "description": "A substring the response body must contain.", "type": "string" }
+              }
+            }
+          }
+        },
+        "recovers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service", "within"],
+          "properties": {
+            "service": { "$ref": "#/$defs/name" },
+            "within": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "no_regression": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service", "measure", "within"],
+          "properties": {
+            "service": { "$ref": "#/$defs/name" },
+            "measure": { "$ref": "#/$defs/measure" },
+            "within": { "$ref": "#/$defs/percent" }
+          }
+        },
+        "slo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service", "measure", "max"],
+          "properties": {
+            "service": { "$ref": "#/$defs/name" },
+            "measure": { "$ref": "#/$defs/measure" },
+            "max": {
+              "description": "A duration for latency measures (p99: 250ms), a percentage for error_rate (1%).",
+              "type": "string"
+            }
+          }
+        },
+        "metric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["query"],
+          "properties": {
+            "query": { "description": "PromQL over the trial's proxy and OTLP metrics.", "type": "string", "minLength": 1 },
+            "max": { "type": "number" },
+            "min": { "type": "number" },
+            "within": { "description": "Relative to base.", "$ref": "#/$defs/percent" },
+            "no_data": { "$ref": "#/$defs/severity" }
+          }
+        }
+      }
+    },
+    "measure": { "enum": ["p50", "p90", "p95", "p99", "error_rate"] }
+  }
+}
