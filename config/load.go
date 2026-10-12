@@ -2,7 +2,9 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,17 +13,26 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Load reads and validates the config file at path. Errors from the file
-// itself are an *Error.
+// Load reads and validates the config file at path. Relative paths in it
+// (the system file) are resolved against the file's directory. Errors from
+// the file itself are an *Error.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(path, data)
+	cfg, ps := parse(data)
+	if cfg != nil {
+		checkSystemExists(ps, cfg, filepath.Dir(path))
+	}
+	if err := ps.err(path); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
-// Parse validates a config held in memory. file names it in errors.
+// Parse validates a config held in memory. file names it in errors. Paths
+// in the config are not checked; Load does that.
 func Parse(file string, data []byte) (*Config, error) {
 	cfg, ps := parse(data)
 	if err := ps.err(file); err != nil {
@@ -66,7 +77,9 @@ func parse(data []byte) (*Config, *problems) {
 		return nil, ps
 	}
 	d := decoder{}
-	return d.config(root), ps
+	cfg := d.config(root)
+	validate(ps, root, cfg)
+	return cfg, ps
 }
 
 var yamlLine = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)
@@ -82,4 +95,24 @@ func yamlProblem(err error) Problem {
 		return Problem{Line: line, Column: 1, Message: "invalid YAML: " + m[2]}
 	}
 	return Problem{Message: "invalid YAML: " + strings.TrimPrefix(msg, "yaml: ")}
+}
+
+func checkSystemExists(ps *problems, cfg *Config, dir string) {
+	rel, path := cfg.System.Compose, []string{"system"}
+	if rel == "" {
+		rel, path = cfg.System.Manifests, []string{"system", "manifests"}
+	}
+	full := rel
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(dir, rel)
+	}
+	st, err := os.Stat(full)
+	switch {
+	case err != nil:
+		ps.add(path, fmt.Sprintf("%s not found (paths are relative to the config file)", rel))
+	case cfg.System.Manifests != "" && !st.IsDir():
+		ps.add(path, fmt.Sprintf("%s is not a directory; manifests names a directory of rendered manifests", rel))
+	case cfg.System.Compose != "" && st.IsDir():
+		ps.add(path, fmt.Sprintf("%s is a directory; for rendered manifests write system: { manifests: %s }", rel, rel))
+	}
 }
