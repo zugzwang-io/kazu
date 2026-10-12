@@ -19,6 +19,7 @@ const schemaURL = "https://zugzwang-io.github.io/kazu/kazu.schema.json"
 var (
 	schemaOnce sync.Once
 	schema     *jsonschema.Schema
+	schemaDoc  any
 )
 
 func compiledSchema() *jsonschema.Schema {
@@ -27,6 +28,7 @@ func compiledSchema() *jsonschema.Schema {
 		if err != nil {
 			panic("config: kazu.schema.json: " + err.Error())
 		}
+		schemaDoc = doc
 		c := jsonschema.NewCompiler()
 		if err := c.AddResource(schemaURL, doc); err != nil {
 			panic("config: kazu.schema.json: " + err.Error())

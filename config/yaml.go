@@ -9,7 +9,10 @@ import (
 
 // flattener resolves aliases and merge keys (<<) into a plain tree, keeping
 // each node's position, so every later step sees what YAML means.
-type flattener struct{ nodes int }
+type flattener struct {
+	nodes int
+	dups  []Problem
+}
 
 const (
 	maxDepth = 100
@@ -53,9 +56,14 @@ func (f *flattener) flatten(n *yaml.Node, depth int) (*yaml.Node, error) {
 func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 	explicit := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if k := n.Content[i]; !isMerge(k) {
-			explicit[k.Value] = true
+		k := n.Content[i]
+		if isMerge(k) {
+			continue
 		}
+		if explicit[k.Value] {
+			f.dups = append(f.dups, Problem{Line: k.Line, Column: k.Column, Message: fmt.Sprintf("key %q appears twice in the same map", k.Value)})
+		}
+		explicit[k.Value] = true
 	}
 	out := *n
 	out.Content = nil
