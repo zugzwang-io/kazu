@@ -1,10 +1,9 @@
-# Runs on every PR into main. One file per trigger: checks that run on the
-# same trigger go here as jobs.
+# Runs on every PR, whatever its base, so stacked PRs get checks too. One
+# file per trigger: checks that run on the same trigger go here as jobs.
 name: pr
 
 on:
   pull_request:
-    branches: [main]
 
 jobs:
   # golangci-lint with the root .golangci.yml, once per Go module (it finds
