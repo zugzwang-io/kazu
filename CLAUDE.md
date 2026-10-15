@@ -45,10 +45,14 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 
 ## Working agreements (for agents)
 
+- **Claude writes the code; Varun reviews and decides.** Varun doesn't write code — PRs must be complete, tested, and reviewable on their own.
 - **Never merge, approve, or close a PR, and never push to main.** Varun approves every merge himself — surface "ready to merge" as a recommendation, don't act on it. Pushing fixes to PR branches is allowed (see `/babysit`).
+- **Follow Antithesis by default.** Where they've made a design decision for the same problem, take it. Deviations are deliberate, flagged **when proposed** (not after), and recorded in DESIGN.md §6.7.
+- **YAGNI.** Don't add features, docs sections, or files nothing needs yet; a spec PR stays a spec.
+- **Fail only on facts** (product principle, DESIGN §2): a missing signal — not exercised, no data, underpowered — is never a pass, and every failure has a config switch.
 - **PLAN.md tracks phases against real PR state.** After any PR is opened, updated, merged, or closed — including by you — run `/sync-plan`.
-- **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status.
-- DESIGN.md is referenced by SPEC.md and PRs but is not in this repo — never guess its contents; say when a decision needs it.
+- **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status. DESIGN.md §11 is the pre-repo decision log; don't relitigate it without new evidence.
+- **`DESIGN.md` (repo root) is the design authority for Kazu itself** — read the relevant section before config, runtime, or product decisions. SPEC.md remains the authority for the shop. Working from Claude's cloud sandbox? Read `docs/sandbox.md` first (blocked proxies, no Docker, REST-only gh).
 
 ## Conventions
 
