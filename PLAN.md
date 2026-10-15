@@ -8,9 +8,10 @@ Legend: `[x]` merged · `[~]` in review · `[ ]` not started
 
 - [x] Shop spec and ground-truth matrix (#1, #3)
 - [x] PR workflows split by trigger, repo-wide lint (#8, #10)
-- [~] #18 CI on every PR (stacked PRs get checks; shop jobs always report so they can be required)
+- [x] #18 CI on every PR (stacked PRs get checks; shop jobs always report so they can be required)
+- [x] #19 Claude Code setup committed: CLAUDE.md, this plan, ADRs, agents, skills, hooks
 - [x] Ruleset step 1: require lint (.) + lint (examples/shop) (2026-10-14)
-- [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **after #13 and #18 merge**
+- [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **after #13 merges** (#18 ✓)
 
 ## Phase 1 — Shop, build step 1 (the system Kazu is built against)
 
