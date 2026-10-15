@@ -1,0 +1,56 @@
+# When a PR's CI fails, Claude diagnoses the failed run and pushes a fix to
+# the PR branch. It never merges (CLAUDE.md working agreements + no merge
+# permission), and leaves judgment calls as a PR comment instead of a push.
+name: Claude CI Fix
+
+on:
+  workflow_run:
+    workflows: [pr, pr-shop]
+    types: [completed]
+
+jobs:
+  fix:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch != 'main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: claude-ci-fix-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout the failing branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - name: Diagnose and fix
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          additional_permissions: |
+            actions: read
+          prompt: |
+            CI failed on branch ${{ github.event.workflow_run.head_branch }}:
+            ${{ github.event.workflow_run.html_url }}
+
+            Get the real error with:
+            gh run view ${{ github.event.workflow_run.id }} --log-failed
+
+            Diagnose before touching anything. If the fix is mechanical
+            (lint, format, broken build, clearly wrong code), make it on
+            this branch, verify locally with the relevant go test / lint,
+            and push. If the failure looks environmental, re-run it with
+            gh run rerun ${{ github.event.workflow_run.id }} --failed
+            instead of committing noise. If a correct fix would change
+            behaviour or test intent — a reviewer's call — do not push;
+            comment on the PR explaining the failure and the options.
+            Follow CLAUDE.md working agreements: never merge, never touch
+            main.
+          claude_args: "--max-turns 25"
