@@ -25,4 +25,6 @@ Proposals beyond DESIGN.md (from PR #13; accepting this ADR accepts them):
 
 ## Consequences
 
+On acceptance, fold the nine proposals into DESIGN.md §4.4 so the reference and the schema agree; until then §4.4 deliberately omits them.
+
 Editors get completion/validation without Kazu code; typos fail loudly. The schema can only tighten, not loosen, once published at `$id`. Tests validate with a generic validator, keeping the contract honest. Changing any of the nine proposals after merge means a schema version bump.

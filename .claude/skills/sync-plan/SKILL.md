@@ -2,6 +2,9 @@
 name: sync-plan
 description: Reconcile PLAN.md with actual PR and merge state so the plan never lies. Use proactively after any PR is opened, updated, merged, closed, or retargeted — including by you or another agent — and whenever PLAN.md might be stale (e.g. the session brief and the plan disagree).
 allowed-tools: Bash(gh *), Bash(git *), Read, Edit, Grep, Glob
+# Reconciling checkboxes against gh output is mechanical and self-verifying;
+# the cheapest model does it fine.
+model: haiku
 ---
 
 Make PLAN.md true again. The plan is how the maintainer sees where the project stands without reconstructing it from PR lists — a stale plan is worse than none. The phase structure is human-owned; statuses and PR references are yours to maintain.
