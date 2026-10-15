@@ -19,7 +19,7 @@ Legend: `[x]` merged · `[~]` in review · `[ ]` not started
 - [x] #24 wire plugin reviewers into skills; simplification joins definition-of-done
 - [~] #25 skill-creator pass over .claude/skills/ (triggering, rationale, operational lessons)
 - [~] DESIGN.md folded into the repo from the claude.ai project (2026-10-15); stale branches from the old plan deleted
-- [ ] Pre-public wording pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide what stays repo-public
+- [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
 ## Phase 1 — Shop, build step 1 (the system Kazu is built against)

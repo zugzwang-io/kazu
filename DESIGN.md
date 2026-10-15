@@ -803,7 +803,7 @@ Keeping it fast and reliable:
 - Before step 3: validate the verdict *method*, not a noise number. On the shop's race flag and on repeated unchanged baselines across different services and runners, choose the statistical test (for example a paired bootstrap on the ratio of quantiles), the minimum number of trial pairs and the trial budget, and confirm the per-run noise estimate keeps false positives at the target rate. Set the default checks' tolerances as policy.
 - Before step 4: K3s on a hosted CI runner (boot time, memory, whether the runner allows the privileges K3s-in-Docker needs).
 - Before step 7: VM snapshot/restore pitfalls (clocks, randomness, open connections).
-  **Size guess:** 10–14 weekends for steps 1–3, a similar amount for 4–5, and 4–6 for step 6. Steps 3 and 5 are where estimates slip. Steps 1–3 include learning Go; start with the Tour of Go, then the step-1 TCP latency proxy as the first real program.
+  **Size guess** (pre-repo, assuming a human writing the code and learning Go): 10–14 weekends for steps 1–3, a similar amount for 4–5, and 4–6 for step 6. Steps 3 and 5 are where estimates slip.
 
 ---
 
@@ -829,6 +829,8 @@ Keeping it fast and reliable:
 ---
 
 ## 11. Decision log
+
+Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `docs/adr/` (see ADR-0001); entries here are not relitigated without new evidence.
 
 | Decision | Why |
 |---|---|
