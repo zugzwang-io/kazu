@@ -177,7 +177,7 @@ Done when Priya's Day 0 and Day 1 (DESIGN §3) work as written: `init`, `doctor`
 
 ## Phase 7 — Kubernetes target (v1.1)
 
-Deviation from DESIGN §8, flagged here: K3s moves out of step 4 so v1.0 ships compose-only. The driver interface from Phase 3 is the seam; nothing above it changes.
+K3s moves out of DESIGN §8 step 4 so v1.0 ships compose-only ([ADR-0003](docs/adr/0003-v1-is-compose-only.md)). The driver interface from Phase 3 is the seam; nothing above it changes.
 
 - [ ] spike → ADR: K3s in Docker on GitHub-hosted runners — boot time, memory, privileges; decides whether K3s rows gate PRs or need a self-hosted runner
 - [ ] driver: K3s cluster per runner, namespace per trial, rendered manifests, readiness probes as ready, Jobs as one-shots
@@ -248,7 +248,6 @@ What working backwards from the screens changed or confirmed:
 
 - **Latency fault — delay request, response, or both?** Claude's proposal: both directions per chunk, like real network latency. Decide in proxy 2/5; record in SPEC.md.
 - **Row S1 uses `RETRY_NEW_KEY`, a step-2 flag, but gates in Phase 3**: use any head-differs-from-base variable for S1 in Phase 3, or move S1 to Phase 4.
-- **K3s out of v1.0** (Phase 7): a deviation from DESIGN §8 step 4, proposed here for the maintainer's decision.
 - **Spikes before committing** (DESIGN §8): the verdict method before Phase 5's stats work; K3s on GitHub-hosted runners before Phase 7.
 
-Resolved since the old plan: CI on stacked PRs (#18); the nine schema proposals (ADR-0002, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract.
+Resolved since the old plan: CI on stacked PRs (#18); the nine schema proposals (ADR-0002, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14).
