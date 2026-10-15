@@ -6,6 +6,18 @@ on:
   pull_request:
 
 jobs:
+  # Kazu's own unit tests. The shop's tests run in pr-shop.yml.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go test -race -count=1 ./...
+
   # golangci-lint with the root .golangci.yml, once per Go module (it finds
   # the config by walking up). A new module adds itself to the matrix.
   lint:

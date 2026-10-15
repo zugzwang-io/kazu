@@ -11,7 +11,12 @@ Legend: `[x]` merged · `[~]` in review · `[ ]` not started
 - [x] #18 CI on every PR (stacked PRs get checks; shop jobs always report so they can be required)
 - [x] #19 Claude Code setup committed: CLAUDE.md, this plan, ADRs, agents, skills, hooks
 - [x] Ruleset step 1: require lint (.) + lint (examples/shop) (2026-10-14)
-- [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **after #13 merges** (#18 ✓)
+- [x] #20 merge-cleanup hook: auto-delete merged branches/worktrees, pull main
+- [x] #21 Claude GitHub App: @claude responder + auto-review workflows
+- [x] #22 reviews scoped to PRs into main; CI-failure fixer workflow
+- [~] #23 test job for the root module (extracted from #13 so the ruleset needn't wait on config review)
+- [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **after #23 merges**
+- [ ] Pre-public wording pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide what stays repo-public
 
 ## Phase 1 — Shop, build step 1 (the system Kazu is built against)
 
