@@ -14,10 +14,10 @@ Legend: `[x]` merged · `[~]` in review · `[ ]` not started
 - [x] #20 merge-cleanup hook: auto-delete merged branches/worktrees, pull main
 - [x] #21 Claude GitHub App: @claude responder + auto-review workflows
 - [x] #22 reviews scoped to PRs into main; CI-failure fixer workflow
-- [~] #23 test job for the root module (extracted from #13 so the ruleset needn't wait on config review)
-- [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **after #23 merges**
-- [~] #24 wire plugin reviewers into skills; simplification joins definition-of-done
-- [ ] skill-creator pass over .claude/skills/ (one-shot quality review of our own skills)
+- [x] #23 test job for the root module (extracted from #13 so the ruleset needn't wait on config review)
+- [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **unblocked (#23 merged), awaiting the maintainer’s go**
+- [x] #24 wire plugin reviewers into skills; simplification joins definition-of-done
+- [~] #25 skill-creator pass over .claude/skills/ (triggering, rationale, operational lessons)
 - [ ] Pre-public wording pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide what stays repo-public
 
 ## Phase 1 — Shop, build step 1 (the system Kazu is built against)
