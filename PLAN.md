@@ -38,7 +38,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #24 wire plugin reviewers into skills; simplification joins definition-of-done
 - [x] #25 skill-creator pass over .claude/skills/ (triggering, rationale, operational lessons)
 - [x] #26 DESIGN.md folded into the repo from the claude.ai project; 15 stale branches deleted (2026-10-15)
-- [~] Platform plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch (this PR)
+- [~] #27 Platform plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
