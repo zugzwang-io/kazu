@@ -10,7 +10,7 @@ Spawn all four in a single message (concurrent), each instructed: "Your job is t
 
 1. **Architecture**: do module boundaries, dependency direction, and abstractions still serve the README principles ("a fault-injection and assertion runtime, nothing more", one static binary)? Is anything being built that the next two phases of PLAN.md will force us to unbuild? Check decisions in `docs/adr/` — is any Accepted ADR now wrong?
 2. **Test coverage**: map SPEC.md's test-suite table against tests that actually exist; probe whether existing tests would catch realistic regressions (mutate-in-your-head: name a plausible bug each test misses). Distinguish "untested" from "untestable as designed".
-3. **Code health**: duplication, error-handling consistency (%w, errors.Is/As, contexts), the shop's ~1,500-line budget, creeping cleverness against "keep it boring".
+3. **Code health**: duplication, error-handling consistency (%w, errors.Is/As, contexts), the shop's ~1,500-line budget, creeping cleverness against "keep it boring". Use the `code-simplifier` and `silent-failure-hunter` agents (pr-review-toolkit plugin) as this lens when available — they're purpose-built for it.
 4. **Product**: does what's being built match what the README sells? Are we building in the order that de-risks the pitch (does Phase 2's scope serve the quickstart demo)? What would a skeptical user hit first?
 
 ## Synthesis

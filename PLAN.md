@@ -16,6 +16,8 @@ Legend: `[x]` merged · `[~]` in review · `[ ]` not started
 - [x] #22 reviews scoped to PRs into main; CI-failure fixer workflow
 - [~] #23 test job for the root module (extracted from #13 so the ruleset needn't wait on config review)
 - [ ] Ruleset step 2: add test, shop test, shop smoke to required checks — **after #23 merges**
+- [~] #24 wire plugin reviewers into skills; simplification joins definition-of-done
+- [ ] skill-creator pass over .claude/skills/ (one-shot quality review of our own skills)
 - [ ] Pre-public wording pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide what stays repo-public
 
 ## Phase 1 — Shop, build step 1 (the system Kazu is built against)
