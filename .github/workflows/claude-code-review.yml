@@ -1,14 +1,16 @@
 name: Claude Code Review
 
+# Reviews only PRs into main: stacked PRs get reviewed when they reach the
+# bottom of the stack (retarget + next push), not on every rebase above.
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+    branches: [main]
+
+# A new push to the PR supersedes the running review.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   claude-review:
