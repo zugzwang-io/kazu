@@ -22,9 +22,11 @@ Proposals beyond DESIGN.md (from PR #13; accepting this ADR accepts them):
 7. A scenario can be empty (no faults).
 8. Names are letters, digits, `.`, `_`, `-`.
 9. `$id` is `https://zugzwang-io.github.io/kazu/kazu.schema.json`.
+10. **Rules decidable inside one object live in the schema**, not in Kazu's validator (decided 2026-10-14 in the #13–#17 review): a fault has exactly one target and one trigger, only its kind's fields, request faults go on edges and process faults on services; `code` is 400–599 or a non-empty gRPC name; `rate` and `load` are 0–100%; a check has exactly one kind and compose keys only with `image`; `metric` has a bound (`within` or `max`/`min`, not both); `slo.max` follows `measure`. Editors get these for free and Kazu's validator keeps only rules that need the whole config.
+11. `system: { manifests }` is published although the Kubernetes driver is v1.1 (ADR-0003), so the contract doesn't change at 1.1. Names must start with a letter or digit, stricter than compose's service names.
 
 ## Consequences
 
-On acceptance, fold the nine proposals into DESIGN.md §4.4 so the reference and the schema agree; until then §4.4 deliberately omits them.
+On acceptance, fold the proposals into DESIGN.md §4.4 so the reference and the schema agree; until then §4.4 deliberately omits them.
 
-Editors get completion/validation without Kazu code; typos fail loudly. The schema can only tighten, not loosen, once published at `$id`. Tests validate with a generic validator, keeping the contract honest. Changing any of the nine proposals after merge means a schema version bump.
+Editors get completion/validation without Kazu code; typos fail loudly. The schema can only tighten, not loosen, once published at `$id`. Tests validate with a generic validator, keeping the contract honest. Changing any of the proposals after merge means a schema version bump.
