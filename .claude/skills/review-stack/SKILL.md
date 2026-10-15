@@ -14,7 +14,7 @@ Open PRs right now:
 
 1. If the user passed PR numbers as arguments, review only those; otherwise review all open PRs listed above.
 2. Determine stack order from the base branches (a PR whose base is another PR's head branch sits on top of it).
-3. Spawn one `kazu-pr-reviewer` agent per PR, **all in a single message** so they run concurrently. Give each agent its PR number and its actual base branch.
+3. Spawn one `kazu-pr-reviewer` agent per PR, **all in a single message** so they run concurrently. Give each agent its PR number and its actual base branch. For PRs with nontrivial code changes (not docs/config-only), also spawn two specialist lenses from the pr-review-toolkit plugin per PR, in the same message: `silent-failure-hunter` (swallowed errors, missing failure paths) and `pr-test-analyzer` (test coverage and quality).
 4. When all reviewers return, synthesize — do not just concatenate:
    - A table: PR, verdict, blocking-finding count.
    - **Merge plan**: which PRs are mergeable now and in what order (respect the stack), which are blocked and on what.
