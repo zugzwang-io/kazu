@@ -1,4 +1,6 @@
-# DESIGN.md §4.4: every key in the reference, as documented.
+# DESIGN.md §4.4: every key in the reference, as documented, less the
+# top-level keys the schema doesn't carry yet (ADR-0002), plus ADR-0004's
+# relative triggers and ADR-0002's scenario checks.
 system: docker-compose.yml
 
 traffic:
@@ -18,11 +20,6 @@ edges:
 
 connections:
   postgres: postgres://postgres:dev@postgres/checkout
-
-telemetry:
-  collector: otel-collector
-
-auto_scenarios: true
 
 scenarios:
   slow-payments:
@@ -49,13 +46,14 @@ scenarios:
     not_exercised: warn
     faults:
       - { edge: payments -> fraud, fault: errors, rate: 1%, code: UNAVAILABLE, after: 20s }
-
-defaults:
-  latency_within: 20%
-  error_rate_within: 0.5pp
-  recovers_within: 60s
-  languages: [go]
-  off: []
+  cascading:
+    faults:
+      - { name: slow-pay, edge: checkout -> payments, fault: latency, delay: 300ms, after: 20s, for: 30s }
+      - { name: db-down, edge: checkout -> postgres, fault: down, from: slow-pay, after: 5s, for: 10s }
+      - { edge: checkout -> payments, fault: down, from: { start: slow-pay }, after: 10s, for: 5s }
+      - { edge: traffic -> checkout, fault: latency, delay: 50ms, from: [db-down, { start: slow-pay }], after: 5s }
+    checks:
+      - recovers: { service: checkout, within: 30s }
 
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1
@@ -71,11 +69,3 @@ checks:
 suites:
   pr: [slow-payments, db-blip, double-click]
   release: all
-
-gate:
-  fail_on: regression
-  trials: auto
-  flaky: warn
-  not_exercised: fail
-  no_data: fail
-  underpowered: warn
