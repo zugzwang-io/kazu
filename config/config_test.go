@@ -51,15 +51,11 @@ func TestReference(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Connections, wantConns) {
 		t.Errorf("connections = %+v", cfg.Connections)
 	}
-	if cfg.Telemetry.Collector != "otel-collector" || !cfg.AutoScenarios {
-		t.Errorf("telemetry = %+v, auto_scenarios = %v", cfg.Telemetry, cfg.AutoScenarios)
-	}
-
 	var names []string
 	for _, s := range cfg.Scenarios {
 		names = append(names, s.Name)
 	}
-	wantNames := []string{"slow-payments", "db-blip", "payments-dies-midflight", "double-click", "browse-under-outage", "soak", "rare-errors"}
+	wantNames := []string{"slow-payments", "db-blip", "payments-dies-midflight", "double-click", "browse-under-outage", "soak", "rare-errors", "cascading"}
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Errorf("scenarios in file order = %q", names)
 	}
@@ -96,9 +92,22 @@ func TestReference(t *testing.T) {
 		t.Errorf("rare-errors = %+v", rare)
 	}
 
-	wantDefaults := config.Defaults{LatencyWithin: 20, ErrorRateWithin: 0.5, RecoversWithin: time.Minute, Languages: []config.Language{config.Go}, Off: nil}
-	if !reflect.DeepEqual(cfg.Defaults, wantDefaults) {
-		t.Errorf("defaults = %+v", cfg.Defaults)
+	cascading, _ := cfg.Scenario("cascading")
+	var from [][]config.Anchor
+	for _, f := range cascading.Faults {
+		from = append(from, f.From)
+	}
+	wantFrom := [][]config.Anchor{
+		nil,
+		{{Fault: "slow-pay"}},
+		{{Fault: "slow-pay", Start: true}},
+		{{Fault: "db-down"}, {Fault: "slow-pay", Start: true}},
+	}
+	if !reflect.DeepEqual(from, wantFrom) || cascading.Faults[0].Name != "slow-pay" || cascading.Faults[2].Name != "" {
+		t.Errorf("cascading anchors = %+v", cascading.Faults)
+	}
+	if c := cascading.Checks; len(c) != 1 || c[0].Name != "recovers-7" || c[0].Recovers.Service != "checkout" {
+		t.Errorf("cascading checks = %+v, want recovers-7, numbered after the 6 top-level checks", c)
 	}
 
 	var checks []string
@@ -136,10 +145,6 @@ func TestReference(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Suites, wantSuites) {
 		t.Errorf("suites = %+v", cfg.Suites)
 	}
-	wantGate := config.Gate{FailOn: config.FailOnRegression, Flaky: config.Warn, NotExercised: config.Fail, NoData: config.Fail, Underpowered: config.Warn}
-	if cfg.Gate != wantGate {
-		t.Errorf("gate = %+v", cfg.Gate)
-	}
 }
 
 // Every yaml example in the README is a config people will copy.
@@ -164,9 +169,6 @@ func TestWalkthrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Telemetry.Collector != "otel-collector" {
-		t.Errorf("flow-style telemetry = %+v", cfg.Telemetry)
-	}
 	stripe, _ := cfg.Scenario("stripe-errors")
 	if f := stripe.Faults[0]; f.Kind != config.Errors || f.Code != "503" || f.Rate != 10 {
 		t.Errorf("stripe-errors fault = %+v", f)
@@ -176,21 +178,6 @@ func TestWalkthrough(t *testing.T) {
 	}
 	if m := cfg.Checks[1].Metric; m.Max == nil || *m.Max != 3 || m.Within != nil {
 		t.Errorf("metric = %+v", m)
-	}
-}
-
-// A minimal config gets the documented defaults.
-func TestDefaults(t *testing.T) {
-	cfg, err := config.Parse("kazu.yaml", []byte("system: docker-compose.yml\ntraffic: { image: grafana/k6:1.0.0 }\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := config.Defaults{LatencyWithin: 20, ErrorRateWithin: 0.5, RecoversWithin: time.Minute}
-	if !reflect.DeepEqual(cfg.Defaults, want) {
-		t.Errorf("defaults = %+v", cfg.Defaults)
-	}
-	if cfg.Gate.Trials != 0 || cfg.Gate.NotExercised != config.Fail || cfg.Gate.NoData != config.Fail || cfg.Gate.Underpowered != config.Warn {
-		t.Errorf("gate = %+v", cfg.Gate)
 	}
 }
 
@@ -248,9 +235,9 @@ func TestFormats(t *testing.T) {
 	if f := firstFault(t, "service: payments, fault: crash, after_requests: 0x10"); f.AfterRequests != 16 {
 		t.Errorf("after_requests 0x10 = %d, want 16 (YAML's value, not the text)", f.AfterRequests)
 	}
-	cfg := parse(t, "defaults: { latency_within: 150%, error_rate_within: 0.25pp, recovers_within: 1m30s }\ngate: { trials: 5 }\n")
-	if d := cfg.Defaults; d.LatencyWithin != 150 || d.ErrorRateWithin != 0.25 || d.RecoversWithin != 90*time.Second || cfg.Gate.Trials != 5 {
-		t.Errorf("defaults = %+v, trials = %d", d, cfg.Gate.Trials)
+	cfg := parse(t, "checks: [ { no_regression: { service: payments, measure: p99, within: 150% } } ]\n")
+	if w := cfg.Checks[0].NoRegression.Within; w != 150 {
+		t.Errorf("within 150%% = %v", w)
 	}
 }
 
@@ -260,11 +247,10 @@ func TestRejectsLossyNumbers(t *testing.T) {
 	tests := []struct{ name, tail, want string }{
 		{"float as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 200.0 } ] } }\n", "expected a whole number, got 200.0"},
 		{"exponent as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 2e2 } ] } }\n", "expected a whole number, got 2e2"},
-		{"float trials", "gate: { trials: 5.0 }\n", "expected a whole number, got 5.0"},
-		{"oversized trials", "gate: { trials: 99999999999999999999 }\n", "expected a whole number"},
+		{"oversized request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 99999999999999999999 } ] } }\n", "expected a whole number"},
 		{"float status", "checks: [ { http: { on: postgres, path: /x, expect: { status: 200.0 } } } ]\n", "expected a whole number, got 200.0"},
 		{"duration overflow", "scenarios: { a: { faults: [ { service: payments, fault: down, after: 9999999999999h } ] } }\n", "is not a duration Kazu can hold"},
-		{"percent overflow", "defaults: { latency_within: 1" + strings.Repeat("0", 400) + "% }\n", "is too large a number"},
+		{"percent overflow", "checks: [ { no_regression: { service: payments, measure: p99, within: 1" + strings.Repeat("0", 400) + "% } } ]\n", "is too large a number"},
 		{"bandwidth overflow", "scenarios: { a: { faults: [ { edge: checkout -> payments, fault: bandwidth, limit: 99999999999gbps } ] } }\n", "is too large a bandwidth"},
 	}
 	for _, tt := range tests {
@@ -328,6 +314,30 @@ func TestChecks(t *testing.T) {
 	}
 	if m := cfg.Checks[5].Metric; m.Min == nil || *m.Min != 1 || m.Max == nil || *m.Max != 3 || m.NoData != config.Warn {
 		t.Errorf("metric = %+v", m)
+	}
+}
+
+// Unnamed scenario checks count on from the top-level list, so every check
+// a scenario runs has a distinct name.
+func TestScenarioChecks(t *testing.T) {
+	cfg := parse(t, `checks:
+  - sql: { on: postgres, query: select 1, expect: 1 }
+scenarios:
+  a:
+    checks:
+      - sql: { on: postgres, query: select 2, expect: 2 }
+      - { name: mine, recovers: { service: payments, within: 30s } }
+  b: {}
+`)
+	var names []string
+	for _, c := range cfg.Scenarios[0].Checks {
+		names = append(names, c.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"sql-2", "mine"}) || cfg.Checks[0].Name != "sql-1" {
+		t.Errorf("scenario check names = %q, top-level %q", names, cfg.Checks[0].Name)
+	}
+	if cfg.Scenarios[1].Checks != nil {
+		t.Errorf("scenario without checks = %+v", cfg.Scenarios[1].Checks)
 	}
 }
 

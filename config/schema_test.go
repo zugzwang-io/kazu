@@ -108,8 +108,8 @@ func TestSchemaAccepts(t *testing.T) {
 		{"scenario names with dots, underscores and dashes", head + "scenarios: { v1.2_rc-3: {} }\n"},
 		{"edge without spaces", head + "edges: { checkout->payments: http }\n"},
 		{"edge with tls", head + "edges: { a -> b: { protocol: grpc, tls: { ca_cert: ./ca.pem, ca_key: '${env:KEY}' } } }\n"},
-		{"trials as an integer", head + "gate: { trials: 3 }\n"},
-		{"suite of auto scenarios", head + "auto_scenarios: true\nsuites: { pr: [auto] }\n"},
+		{"suite of auto scenarios", head + "suites: { pr: [auto] }\n"},
+		{"scenario checks", head + "scenarios: { s: { checks: [ { recovers: { service: a, within: 30s } }, { image: x, volumes: [./c:/c] } ] } }\n"},
 
 		{"latency", fault("edge: a -> b, fault: latency, delay: 300ms, jitter: 50ms, after: 20s")},
 		{"down on a service", fault("service: b, fault: down, after: 20s, for: 15s")},
@@ -125,12 +125,15 @@ func TestSchemaAccepts(t *testing.T) {
 		{"cpu", fault("service: b, fault: cpu, load: 90%")},
 		{"memory", fault("service: b, fault: memory, load: 100%")},
 		{"disk_full", fault("service: b, fault: disk_full, after: 30s")},
+		{"named fault", fault("name: slow-pay, edge: a -> b, fault: latency, delay: 300ms, for: 30s")},
+		{"from a fault's end", fault("edge: a -> b, fault: down, from: slow-pay, after: 5s")},
+		{"from a fault's start", fault("edge: a -> b, fault: down, from: { start: slow-pay }")},
+		{"from the latest of several", fault("edge: a -> b, fault: down, from: [slow-pay, { start: db-down }], after: 5s")},
 
 		{"compound durations", fault("edge: a -> b, fault: latency, delay: 1.5s, after: 1m30s, for: 2h")},
 		{"fractional share", fault("edge: a -> b, fault: reset, rate: 0.5%")},
 		{"bandwidth units", head + "scenarios: { s: { faults: [ { edge: a -> b, fault: bandwidth, limit: 100bps }, { edge: a -> b, fault: bandwidth, limit: 1.5mbps }, { edge: a -> b, fault: bandwidth, limit: 2gbps } ] } }\n"},
-		{"tolerances over 100%", head + "defaults: { latency_within: 150% }\nchecks: [ { no_regression: { service: a, measure: p99, within: 200% } } ]\n"},
-		{"percentage points", head + "defaults: { error_rate_within: 0.5pp }\n"},
+		{"tolerances over 100%", check("no_regression: { service: a, measure: p99, within: 200% }")},
 
 		{"image check with compose keys", check("image: ghcr.io/zugzwang-io/kazu-python:1, command: [python, -m, checks], volumes: [./checks:/checks:ro], environment: { DEBUG: '1' }")},
 		{"sql check expecting a value", check("name: one-charge, sql: { on: pg, query: select count(*) from charges, expect: 1 }")},
@@ -179,7 +182,10 @@ func TestSchemaRejects(t *testing.T) {
 		{"scenario name starting with a dash", head + "scenarios: { -a: {} }\n", "*", "invalid propertyName '-a'"},
 		{"unknown protocol", head + "edges: { a -> b: udp }\n", "/edges/a -> b", ""},
 		{"tls without a key", head + "edges: { a -> b: { protocol: http, tls: { ca_cert: x } } }\n", "/edges/a -> b/tls", "missing property 'ca_key'"},
-		{"auto_scenarios as text", head + "auto_scenarios: 'true'\n", "/auto_scenarios", "want boolean"},
+		{"telemetry, not in the schema yet", head + "telemetry: { collector: otel }\n", "", "additional properties 'telemetry' not allowed"},
+		{"auto_scenarios, not in the schema yet", head + "auto_scenarios: true\n", "", "additional properties 'auto_scenarios' not allowed"},
+		{"defaults, not in the schema yet", head + "defaults: { off: [latency] }\n", "", "additional properties 'defaults' not allowed"},
+		{"gate, not in the schema yet", head + "gate: { trials: 3 }\n", "", "additional properties 'gate' not allowed"},
 
 		{"fault without a kind", fault("edge: a -> b, after: 20s"), "/scenarios/s/faults/0", "missing property 'fault'"},
 		{"unknown fault kind", fault("edge: a -> b, fault: slow"), "/scenarios/s/faults/0/fault", ""},
@@ -202,6 +208,13 @@ func TestSchemaRejects(t *testing.T) {
 		{"crash on an edge", fault("edge: a -> b, fault: crash, restart_after: 5s"), "/scenarios/s/faults/0/edge", "false schema"},
 		{"cpu on an edge", fault("edge: a -> b, fault: cpu, load: 90%"), "/scenarios/s/faults/0/edge", "false schema"},
 		{"unknown fault key", fault("edge: a -> b, fault: down, retries: 3"), "/scenarios/s/faults/0", "additional properties 'retries' not allowed"},
+		{"fault name with a space", fault("name: slow pay, edge: a -> b, fault: down"), "/scenarios/s/faults/0/name", "does not match pattern"},
+		{"from with after_requests", fault("edge: a -> b, fault: down, from: x, after_requests: 10"), "/scenarios/s/faults/0/after_requests", "false schema"},
+		{"from as an empty list", fault("edge: a -> b, fault: down, from: []"), "/scenarios/s/faults/0/from", "minItems"},
+		{"from naming the same anchor twice", fault("edge: a -> b, fault: down, from: [x, x]"), "/scenarios/s/faults/0/from", "are equal"},
+		{"from a fault's end, spelled out", fault("edge: a -> b, fault: down, from: { end: x }"), "/scenarios/s/faults/0/from", "missing property 'start'"},
+		{"from a name with a space", fault("edge: a -> b, fault: down, from: slow pay"), "/scenarios/s/faults/0/from", "does not match pattern"},
+		{"from as a number", fault("edge: a -> b, fault: down, from: 5"), "/scenarios/s/faults/0/from", ""},
 
 		{"duration without a unit", fault("edge: a -> b, fault: down, after: 20"), "/scenarios/s/faults/0/after", "want string"},
 		{"duration as quoted number", fault("edge: a -> b, fault: down, after: '20'"), "/scenarios/s/faults/0/after", "does not match pattern"},
@@ -218,11 +231,6 @@ func TestSchemaRejects(t *testing.T) {
 		{"empty grpc code", fault("edge: a -> b, fault: errors, rate: 1%, code: ''"), "/scenarios/s/faults/0/code", "minLength"},
 		{"zero request count", fault("edge: a -> b, fault: down, after_requests: 0"), "/scenarios/s/faults/0/after_requests", "minimum"},
 		{"request count as text", fault("edge: a -> b, fault: down, after_requests: '200'"), "/scenarios/s/faults/0/after_requests", "want integer"},
-
-		{"latency_within in points", head + "defaults: { latency_within: 20pp }\n", "/defaults/latency_within", "does not match pattern"},
-		{"error_rate_within as percent", head + "defaults: { error_rate_within: 0.5% }\n", "/defaults/error_rate_within", "does not match pattern"},
-		{"unknown language", head + "defaults: { languages: [python] }\n", "/defaults/languages/0", ""},
-		{"unknown default to switch off", head + "defaults: { off: [latancy] }\n", "/defaults/off/0", ""},
 
 		{"check with nothing in it", check(""), "/checks/0", "'oneOf' failed"},
 		{"check with only a name", check("name: x"), "/checks/0", "'oneOf' failed"},
@@ -246,14 +254,11 @@ func TestSchemaRejects(t *testing.T) {
 		{"metric with within and max", check("metric: { query: up, within: 5%, max: 3 }"), "/checks/0/metric/max", "false schema"},
 		{"metric max as text", check("metric: { query: up, max: '3' }"), "/checks/0/metric/max", "want number"},
 		{"metric within in points", check("metric: { query: up, within: 1pp }"), "/checks/0/metric/within", "does not match pattern"},
+		{"unknown severity", check("metric: { query: up, max: 3, no_data: ignore }"), "/checks/0/metric/no_data", ""},
+		{"scenario check with two kinds", head + "scenarios: { s: { checks: [ { image: x, sql: { on: pg, query: x, expect: empty } } ] } }\n", "/scenarios/s/checks/0", "'oneOf' failed"},
 
 		{"empty suite", head + "suites: { pr: [] }\n", "/suites/pr", "minItems"},
 		{"suite as a word other than all", head + "suites: { pr: everything }\n", "/suites/pr", ""},
-		{"trials as a word other than auto", head + "gate: { trials: lots }\n", "/gate/trials", ""},
-		{"zero trials", head + "gate: { trials: 0 }\n", "/gate/trials", "minimum"},
-		{"fractional trials", head + "gate: { trials: 1.5 }\n", "/gate/trials", "want integer or string"},
-		{"trials as text", head + "gate: { trials: '3' }\n", "/gate/trials", ""},
-		{"unknown severity", head + "gate: { flaky: ignore }\n", "/gate/flaky", ""},
 	}
 	sch := compile(t)
 	for _, tt := range tests {
