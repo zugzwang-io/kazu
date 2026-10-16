@@ -79,12 +79,7 @@ func parse(data []byte) (*Config, *problems) {
 		return nil, ps
 	}
 	if err := compiledSchema().Validate(tree); err != nil {
-		var ve *jsonschema.ValidationError
-		if !errors.As(err, &ve) {
-			ps.add(nil, err.Error())
-			return nil, ps
-		}
-		schemaProblems(ps, ve)
+		schemaProblems(ps, err.(*jsonschema.ValidationError)) //nolint:errorlint // Validate only ever returns a *ValidationError
 	}
 	if len(ps.list) > 0 {
 		return nil, ps
