@@ -2,17 +2,23 @@ package checkout
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"sync"
 	"testing"
 	"time"
 )
 
+// reset, as a scripted code, resets the connection after reading the request.
+const reset = -1
+
 // scripted serves one response per attempt from codes; 0 means "hang past the
-// attempt timeout". It records each attempt's idempotency key.
+// attempt timeout" and reset means "reset the connection after reading the
+// request". It records each attempt's idempotency key.
 type scripted struct {
 	mu    sync.Mutex
 	codes []int
@@ -25,6 +31,10 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.keys = append(s.keys, r.Header.Get("Idempotency-Key"))
 	code := s.codes[min(n, len(s.codes)-1)]
 	s.mu.Unlock()
+	if code == reset {
+		resetConn(w)
+		return
+	}
 	if code == 0 {
 		_, _ = io.Copy(io.Discard, r.Body) // lets the server notice the client hang up
 		select {
@@ -34,6 +44,23 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(code)
+}
+
+// resetConn sends a TCP RST instead of a response: payments may have
+// charged, but the caller can't know.
+func resetConn(w http.ResponseWriter) {
+	conn, _, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		panic(fmt.Sprintf("resetConn: %T is not a TCP connection", conn))
+	}
+	if err := tcp.SetLinger(0); err != nil {
+		panic(err)
+	}
+	_ = tcp.Close()
 }
 
 func (s *scripted) attempts() []string {
@@ -61,6 +88,9 @@ func TestPaymentsRetryPolicy(t *testing.T) {
 		{"shed then timeout: unknown", []int{503, 0, 503}, OutcomeUnknown, 3},
 		{"timeouts leave it unknown", []int{0}, OutcomeUnknown, 3},
 		{"timeout then paid", []int{0, 200}, OutcomePaid, 2},
+		{"resets leave it unknown, not declined", []int{reset}, OutcomeUnknown, 3},
+		{"reset then paid", []int{reset, 200}, OutcomePaid, 2},
+		{"shed then reset: unknown", []int{503, reset, 503}, OutcomeUnknown, 3},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -106,5 +136,39 @@ func TestPaymentsStopsWhenCallerGivesUp(t *testing.T) {
 	}
 	if n := len(h.attempts()); n > 2 {
 		t.Fatalf("kept retrying after the caller's deadline: %d attempts", n)
+	}
+}
+
+// A reset on a reused keep-alive connection must reach Charge as one
+// ambiguous attempt; net/http would otherwise resend the request on its own
+// and report only the resend's answer.
+func TestResetOnReusedConnectionIsNotResent(t *testing.T) {
+	for try := 0; ; try++ {
+		if try == 20 {
+			t.Fatal("the client never reused its connection, so the test proves nothing")
+		}
+		h := &scripted{codes: []int{200, reset, 503}}
+		srv := httptest.NewServer(h)
+		c := client(srv.URL)
+		c.HTTP = &http.Client{Transport: &http.Transport{}}
+		o := Order{ID: "ord_k", IdempotencyKey: "k"}
+		if got := c.attempt(context.Background(), o); got != resultPaid {
+			srv.Close()
+			t.Fatalf("warm-up attempt: got %d, want paid", got)
+		}
+		var reused bool
+		ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+			GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused },
+		})
+		got := c.attempt(ctx, o)
+		requests := len(h.attempts())
+		srv.Close()
+		if !reused {
+			continue // the idle connection wasn't back in the pool yet; try again
+		}
+		if got != resultAmbiguous || requests != 2 {
+			t.Fatalf("got result %d after %d requests, want ambiguous after 2 (no hidden resend)", got, requests)
+		}
+		return
 	}
 }
