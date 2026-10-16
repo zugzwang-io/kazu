@@ -177,11 +177,13 @@ func (v *validator) anchors(path []string, faults []Fault) {
 	}
 	next := make([][]int, len(faults))
 	for i, f := range faults {
-		list := v.node(at(i, "from")...)
+		from := at(i, "from")
+		n := v.node(from...)
+		listed := n != nil && n.Kind == yaml.SequenceNode
 		for j, a := range f.From {
-			apath := at(i, "from")
-			if list != nil && list.Kind == yaml.SequenceNode {
-				apath = append(apath, strconv.Itoa(j))
+			apath := from
+			if listed {
+				apath = append(slices.Clone(from), strconv.Itoa(j))
 			}
 			k, ok := byName[a.Fault]
 			switch {
@@ -210,8 +212,9 @@ func (v *validator) anchors(path []string, faults []Fault) {
 	}
 }
 
-// loops returns each cycle in the graph next once, starting at its
-// lowest-numbered node, in order of that node.
+// loops returns the cycles a depth-first walk of next finds (at least one
+// whenever next has a cycle), each starting at its lowest-numbered node, in
+// order of that node.
 func loops(next [][]int) [][]int {
 	const (
 		unseen = iota
@@ -230,9 +233,9 @@ func loops(next [][]int) [][]int {
 			case unseen:
 				visit(k)
 			case open:
-				loop := slices.Clone(stack[slices.Index(stack, k):])
+				loop := stack[slices.Index(stack, k):]
 				lo := slices.Index(loop, slices.Min(loop))
-				found = append(found, append(loop[lo:], loop[:lo]...))
+				found = append(found, slices.Concat(loop[lo:], loop[:lo]))
 			}
 		}
 		stack = stack[:len(stack)-1]
