@@ -12,7 +12,8 @@ import (
 )
 
 // scripted serves one response per attempt from codes; 0 means "hang past the
-// attempt timeout". It records each attempt's idempotency key.
+// attempt timeout" and reset means "reset the connection after reading the
+// request". It records each attempt's idempotency key.
 type scripted struct {
 	mu    sync.Mutex
 	codes []int
@@ -25,6 +26,10 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.keys = append(s.keys, r.Header.Get("Idempotency-Key"))
 	code := s.codes[min(n, len(s.codes)-1)]
 	s.mu.Unlock()
+	if code == reset {
+		resetConn(w)
+		return
+	}
 	if code == 0 {
 		_, _ = io.Copy(io.Discard, r.Body) // lets the server notice the client hang up
 		select {
@@ -34,6 +39,19 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(code)
+}
+
+const reset = -1
+
+// resetConn sends a TCP RST instead of a response: payments may have
+// charged, but the caller can't know.
+func resetConn(w http.ResponseWriter) {
+	conn, _, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	_ = conn.(*net.TCPConn).SetLinger(0)
+	_ = conn.Close()
 }
 
 func (s *scripted) attempts() []string {
@@ -61,6 +79,9 @@ func TestPaymentsRetryPolicy(t *testing.T) {
 		{"shed then timeout: unknown", []int{503, 0, 503}, OutcomeUnknown, 3},
 		{"timeouts leave it unknown", []int{0}, OutcomeUnknown, 3},
 		{"timeout then paid", []int{0, 200}, OutcomePaid, 2},
+		{"resets leave it unknown, not declined", []int{reset}, OutcomeUnknown, 3},
+		{"reset then paid", []int{reset, 200}, OutcomePaid, 2},
+		{"shed then reset: unknown", []int{503, reset, 503}, OutcomeUnknown, 3},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
