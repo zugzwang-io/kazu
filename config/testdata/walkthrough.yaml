@@ -1,4 +1,4 @@
-# DESIGN.md §4.2: Priya's kazu.yaml, less telemetry (ADR-0002).
+# A first kazu.yaml for a checkout system.
 system: docker-compose.yml
 
 traffic:

@@ -1,6 +1,4 @@
-# DESIGN.md §4.4: every key in the reference, as documented, less the
-# top-level keys the schema doesn't carry yet (ADR-0002), plus ADR-0004's
-# relative triggers and ADR-0002's scenario checks.
+# Every key the schema carries, in a realistic config.
 system: docker-compose.yml
 
 traffic:
