@@ -92,6 +92,9 @@ func TestRules(t *testing.T) {
 		{"duration shorter than its faults", "scenarios:\n  a:\n    duration: 10s\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 20s, for: 5s }\n      - { edge: checkout -> payments, fault: down, after: 5s }\n", []string{
 			`12:15: scenarios.a.duration: traffic stops at 10s, before faults[0] ends at 25s; the fault would not be exercised`,
 		}},
+		{"fault from traffic start outlasting the duration", "scenarios:\n  a:\n    duration: 10s\n    faults:\n      - { edge: checkout -> payments, fault: down, for: 20s }\n", []string{
+			`12:15: scenarios.a.duration: traffic stops at 10s, before faults[0] ends at 20s; the fault would not be exercised`,
+		}},
 		{"gRPC code on an HTTP edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 5%, code: UNAVAILABLE }\n", []string{
 			`13:70: scenarios.a.faults[0].code: "UNAVAILABLE" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
 		}},
@@ -235,6 +238,7 @@ func TestRulesAccept(t *testing.T) {
 		{"anchors: a join, and the start of a fault without for", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: y, edge: worker -> payments, fault: down, for: 5s, from: { start: x } }\n      - { edge: payments -> fraud, fault: down, from: [y, { start: x }], after: 1s }\n"},
 		{"duration check skips anchored faults", "scenarios:\n  a:\n    duration: 10s\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, after: 1s, for: 5s }\n      - { edge: worker -> payments, fault: down, from: x, after: 20s }\n"},
 		{"duration that covers its faults", "scenarios:\n  a:\n    duration: 30s\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 20s, for: 10s }\n"},
+		{"metric pinned to one value", "checks:\n  - metric: { query: up, min: 1, max: 1 }\n"},
 		{"zero tolerance", "checks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},
 	}
 	for _, tt := range tests {
@@ -254,6 +258,8 @@ func TestStatusCodes(t *testing.T) {
 		"payments -> fraud, fault: errors, rate: 5%, code: unavailable":  "UNAVAILABLE",
 		"payments -> fraud, fault: errors, rate: 5%, code: DATA_LOSS":    "DATA_LOSS",
 		"checkout -> payments, fault: errors, rate: 5%, code: 503":       "503",
+		"checkout -> payments, fault: errors, rate: 5%, code: 400":       "400",
+		"checkout -> payments, fault: errors, rate: 5%, code: 599":       "599",
 		"checkout -> payments, fault: errors, rate: 5%, code: '503'":     "503",
 		"payments -> fraud, fault: timeout, rate: 5%, code: UNAVAILABLE": "UNAVAILABLE",
 	}
@@ -279,6 +285,7 @@ func TestStatusCodes(t *testing.T) {
 		"payments -> fraud, code: 0":           `OK is success; errors injects failures, so use a code such as UNAVAILABLE`,
 		"checkout -> payments, code: 200":      `"200" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
 		"checkout -> payments, code: 600":      `"600" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
+		"checkout -> payments, code: 399":      `"399" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
 	}
 	for field, want := range reject {
 		edge, code, _ := strings.Cut(field, ", ")

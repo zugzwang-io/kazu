@@ -85,7 +85,7 @@ func (v *validator) scenario(s Scenario, taken map[string]bool) {
 	v.positive(append(path, "duration"), s.Duration)
 	for i, f := range s.Faults {
 		// Anchored faults' times resolve when the plan is built.
-		if end := f.After + f.For; f.From == nil && f.After > 0 && end > s.Duration {
+		if end := f.After + f.For; f.From == nil && end > s.Duration {
 			v.ps.add(append(path, "duration"), fmt.Sprintf("traffic stops at %s, before faults[%d] ends at %s; the fault would not be exercised", s.Duration, i, end))
 		}
 	}
