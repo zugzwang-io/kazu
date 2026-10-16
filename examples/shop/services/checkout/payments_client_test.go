@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"sync"
 	"testing"
 	"time"
@@ -135,5 +136,39 @@ func TestPaymentsStopsWhenCallerGivesUp(t *testing.T) {
 	}
 	if n := len(h.attempts()); n > 2 {
 		t.Fatalf("kept retrying after the caller's deadline: %d attempts", n)
+	}
+}
+
+// A reset on a reused keep-alive connection must reach Charge as one
+// ambiguous attempt; net/http would otherwise resend the request on its own
+// and report only the resend's answer.
+func TestResetOnReusedConnectionIsNotResent(t *testing.T) {
+	for try := 0; ; try++ {
+		if try == 20 {
+			t.Fatal("the client never reused its connection, so the test proves nothing")
+		}
+		h := &scripted{codes: []int{200, reset, 503}}
+		srv := httptest.NewServer(h)
+		c := client(srv.URL)
+		c.HTTP = &http.Client{Transport: &http.Transport{}}
+		o := Order{ID: "ord_k", IdempotencyKey: "k"}
+		if got := c.attempt(context.Background(), o); got != resultPaid {
+			srv.Close()
+			t.Fatalf("warm-up attempt: got %d, want paid", got)
+		}
+		var reused bool
+		ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+			GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused },
+		})
+		got := c.attempt(ctx, o)
+		requests := len(h.attempts())
+		srv.Close()
+		if !reused {
+			continue // the idle connection wasn't back in the pool yet; try again
+		}
+		if got != resultAmbiguous || requests != 2 {
+			t.Fatalf("got result %d after %d requests, want ambiguous after 2 (no hidden resend)", got, requests)
+		}
+		return
 	}
 }
