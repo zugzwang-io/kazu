@@ -32,6 +32,9 @@ scenarios:
 	}
 }
 
+// Each rule the validator owns has a failing case with its exact message.
+// Rules the schema owns (fields per kind, one target, one check kind, ...)
+// are in errors_test.go.
 func TestRules(t *testing.T) {
 	tests := []struct {
 		name string
@@ -41,24 +44,13 @@ func TestRules(t *testing.T) {
 		{"undeclared edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payment, fault: latency, delay: 1s }\n", []string{
 			`13:17: scenarios.a.faults[0].edge: checkout -> payment is not a declared edge; faults go only on edges listed under edges (did you mean "checkout -> payments"?)`,
 		}},
-		{"edge spacing is normalised", "scenarios:\n  a:\n    faults:\n      - { edge: checkout->payments, fault: latency, delay: 1s }\n", nil},
-		{"field for another kind", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, delay: 1s }\n", []string{
-			`13:52: scenarios.a.faults[0].delay: delay doesn't apply to a down fault`,
-		}},
-		{"no target", "scenarios:\n  a:\n    faults:\n      - { fault: down }\n", []string{
-			`13:9: scenarios.a.faults[0]: missing a target: set edge (one declared edge) or service`,
-		}},
-		{"both targets", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, service: payments, fault: down }\n", []string{
-			`13:9: scenarios.a.faults[0]: set either edge or service, not both`,
-		}},
-		{"request fault on a service", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: errors, rate: 5%, code: 503 }\n", []string{
-			`13:20: scenarios.a.faults[0].service: an errors fault goes on one http or grpc edge; use edge: <caller> -> payments`,
+		{"undeclared edge still gets its values checked", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payment, fault: latency, delay: 0s, for: 0s }\n", []string{
+			`13:17: scenarios.a.faults[0].edge: checkout -> payment is not a declared edge; faults go only on edges listed under edges (did you mean "checkout -> payments"?)`,
+			`13:61: scenarios.a.faults[0].delay: must be longer than zero`,
+			`13:70: scenarios.a.faults[0].for: must be longer than zero`,
 		}},
 		{"request fault on a tcp edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> postgres, fault: timeout, rate: 5% }\n", []string{
 			`13:17: scenarios.a.faults[0].edge: a timeout fault needs an http or grpc edge; checkout -> postgres is tcp, so the proxy sees bytes, not requests`,
-		}},
-		{"process fault on an edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: crash }\n", []string{
-			`13:17: scenarios.a.faults[0].edge: a crash fault acts on a service's container; use service: payments`,
 		}},
 		{"fault on traffic", "scenarios:\n  a:\n    faults:\n      - { service: traffic, fault: pause }\n", []string{
 			`13:20: scenarios.a.faults[0].service: traffic is the load, not part of the system; faults go on the system's services and edges`,
@@ -69,39 +61,54 @@ func TestRules(t *testing.T) {
 		{"request count on a service with only tcp edges", "scenarios:\n  a:\n    faults:\n      - { service: postgres, fault: crash, after_requests: 3 }\n", []string{
 			`13:60: scenarios.a.faults[0].after_requests: after_requests on a service counts requests on its declared http and grpc inbound edges, and postgres has none. Use after: <duration>`,
 		}},
-		{"both triggers", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 1s, after_requests: 3 }\n", []string{
-			`13:9: scenarios.a.faults[0]: set after or after_requests, not both`,
-		}},
 		{"for on a crash", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, for: 5s }\n", []string{
 			`13:49: scenarios.a.faults[0].for: a crash is instant; restart_after sets how long the service stays down`,
 		}},
-		{"zero rate", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: reset, rate: 0% }\n", []string{
-			`13:59: scenarios.a.faults[0].rate: 0% is outside 0% to 100% (zero would never fire)`,
+		{"zero restart_after", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, restart_after: 0s }\n", []string{
+			`13:59: scenarios.a.faults[0].restart_after: must be longer than zero`,
 		}},
-		{"zero duration", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, for: 0s }\n", []string{
-			`13:57: scenarios.a.faults[0].for: must be longer than zero`,
+		{"jitter above delay", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 100ms, jitter: 5s }\n", []string{
+			`13:77: scenarios.a.faults[0].jitter: jitter (5s) is more than delay (100ms), so the delay could go negative`,
+		}},
+		{"zero rate", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: reset, rate: 0% }\n", []string{
+			`13:59: scenarios.a.faults[0].rate: 0% would never fire; use a share above 0%`,
+		}},
+		{"zero load", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: cpu, load: 0% }\n", []string{
+			`13:48: scenarios.a.faults[0].load: 0% would never fire; use a share above 0%`,
+		}},
+		{"zero bandwidth", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: bandwidth, limit: 0bps }\n", []string{
+			`13:64: scenarios.a.faults[0].limit: must be above zero; use down to stop traffic entirely`,
+		}},
+		{"zero durations", "scenarios:\n  a:\n    duration: 0s\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 0s, for: 0s }\n", []string{
+			`12:15: scenarios.a.duration: must be longer than zero`,
+			`14:62: scenarios.a.faults[0].delay: must be longer than zero`,
+			`14:71: scenarios.a.faults[0].for: must be longer than zero`,
+		}},
+		{"duration shorter than its faults", "scenarios:\n  a:\n    duration: 10s\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 20s, for: 5s }\n      - { edge: checkout -> payments, fault: down, after: 5s }\n", []string{
+			`12:15: scenarios.a.duration: traffic stops at 10s, before faults[0] ends at 25s; the fault would not be exercised`,
 		}},
 		{"gRPC code on an HTTP edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 5%, code: UNAVAILABLE }\n", []string{
-			`13:70: scenarios.a.faults[0].code: "UNAVAILABLE" is not an HTTP status; use a number from 100 to 599, such as 503`,
+			`13:70: scenarios.a.faults[0].code: "UNAVAILABLE" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
+		}},
+		{"quoted success code on an HTTP edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 5%, code: '200' }\n", []string{
+			`13:70: scenarios.a.faults[0].code: "200" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
+		}},
+		{"defaults", "defaults: { error_rate_within: 150pp, recovers_within: 0s }\n", []string{
+			`10:32: defaults.error_rate_within: can't exceed 100pp`,
+			`10:56: defaults.recovers_within: must be longer than zero`,
 		}},
 		{"reserved scenario names", "scenarios:\n  auto-x: {}\n  all: {}\n", []string{
 			`11:3: scenarios.auto-x: "auto-x" is reserved: "all" and "auto" are suite keywords, and names starting with "auto-" belong to generated scenarios`,
 			`12:3: scenarios.all: "all" is reserved: "all" and "auto" are suite keywords, and names starting with "auto-" belong to generated scenarios`,
 		}},
-		{"suite entries", "scenarios:\n  db-blip: {}\nsuites:\n  pr: [db-blpi, auto]\n", []string{
+		{"suite entries", "scenarios:\n  db-blip: {}\nsuites:\n  pr: [db-blpi, auto, all]\n", []string{
 			`13:8: suites.pr[0]: no scenario named "db-blpi" (did you mean "db-blip"?)`,
 			`13:17: suites.pr[1]: auto is a generated scenario; set auto_scenarios: true to generate them`,
+			`13:23: suites.pr[2]: "all" is written as the suite's value (pr: all), not as an entry in its list`,
 		}},
-		{"auto scenario names", "auto_scenarios: true\nsuites:\n  pr: [auto-crash-payments, auto-down-checkout-payments, auto-down-traffic-checkout, auto]\n", []string{
+		{"auto scenario names", "auto_scenarios: true\nsuites:\n  pr: [auto-crash-payments, auto-down-checkout-payments, auto-down-traffic-checkout, auto-crash-traffic, auto]\n", []string{
 			`12:58: suites.pr[2]: no scenario named "auto-down-traffic-checkout"`,
-		}},
-		{"checks", "checks:\n  - sql: { on: pg, query: x, expect: empty }\n  - slo: { service: postgres, measure: p99, max: 1% }\n  - metric: { query: up }\n  - { recovers: { service: payments, within: 1s }, volumes: [x] }\n  - { name: dup, metric: { query: up, max: 1 } }\n  - { name: dup, recovers: { service: checkout, within: 1s }, sql: { on: postgres, query: x, expect: 0 } }\n", []string{
-			`11:16: checks[0].sql.on: no connection named "pg"; declare it under connections (declared: postgres)`,
-			`12:21: checks[1].slo.service: postgres's declared inbound edges are all tcp, where the proxy sees bytes, not requests; this check needs an http or grpc edge into postgres`,
-			`12:50: checks[1].slo.max: "1%" is not a duration; p99 takes one such as 250ms`,
-			`13:13: checks[2].metric: a metric check needs a bound: max, min, or within (relative to base)`,
-			`14:52: checks[3].volumes: volumes belongs to a code check (an image: entry), not a recovers check`,
-			`16:5: checks[5]: a check has exactly one kind; this one has sql and recovers`,
+			`12:86: suites.pr[3]: traffic is the load, not part of the system; no crash scenario is generated for it`,
 		}},
 	}
 	for _, tt := range tests {
@@ -120,6 +127,119 @@ func TestRules(t *testing.T) {
 	}
 }
 
+// Check rules need a second connection, so they get their own document.
+func TestCheckRules(t *testing.T) {
+	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
+traffic: { image: grafana/k6:1.0.0 }
+edges:
+  traffic -> checkout: http
+  checkout -> payments: http
+  checkout -> postgres: tcp
+connections:
+  postgres: postgres://postgres:dev@postgres/shop
+  api: http://checkout:8080
+checks:
+  - sql: { on: pg, query: x, expect: empty }
+  - sql: { on: api, query: x, expect: empty }
+  - http: { on: postgres, path: /x, expect: { status: 200 } }
+  - slo: { service: postgres, measure: p99, max: 0s }
+  - metric: { query: up, min: 2, max: 1 }
+  - { name: dup, metric: { query: up, max: 1 } }
+  - { name: dup, recovers: { service: paymnets, within: 1s } }
+`))
+	want := []string{
+		`kazu.yaml:11:16: checks[0].sql.on: no connection named "pg"; declare it under connections (declared: postgres, api)`,
+		`kazu.yaml:12:16: checks[1].sql.on: api is a http:// connection; this check needs a postgres:// one`,
+		`kazu.yaml:13:17: checks[2].http.on: postgres is a postgres:// connection; this check needs a http:// one`,
+		`kazu.yaml:14:21: checks[3].slo.service: postgres's declared inbound edges are all tcp, where the proxy sees bytes, not requests; this check needs an http or grpc edge into postgres`,
+		`kazu.yaml:14:50: checks[3].slo.max: must be longer than zero`,
+		`kazu.yaml:15:13: checks[4].metric: min (2) is above max (1), so no value can pass`,
+		`kazu.yaml:17:13: checks[6].name: another check is already named "dup"`,
+		`kazu.yaml:17:39: checks[6].recovers.service: paymnets has no declared inbound edges, so no proxy measures it; declare an http or grpc edge into paymnets (did you mean "payments"?)`,
+	}
+	if err == nil || err.Error() != strings.Join(want, "\n") {
+		t.Errorf("got:\n%v\nwant:\n%s", err, strings.Join(want, "\n"))
+	}
+}
+
+// mixed adds a grpc edge and a service with both tcp and http inbound edges.
+const mixed = `system: docker-compose.yml
+traffic: { image: grafana/k6:1.0.0 }
+edges:
+  traffic -> checkout: http
+  checkout -> payments: http
+  worker -> payments: tcp
+  payments -> fraud: grpc
+connections:
+  postgres: postgres://postgres:dev@postgres/shop
+`
+
+// Shapes that must pass: the positive side of the rules above.
+func TestRulesAccept(t *testing.T) {
+	tests := []struct{ name, yaml string }{
+		{"edge spacing is normalised", "scenarios:\n  a:\n    faults:\n      - { edge: checkout->payments, fault: latency, delay: 1s }\n"},
+		{"request count on an http edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 5%, code: 503, after_requests: 10 }\n"},
+		{"request count on a service with mixed inbound edges", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, after_requests: 3, restart_after: 1s }\n"},
+		{"measured service with mixed inbound edges", "checks:\n  - recovers: { service: payments, within: 30s }\n  - slo: { service: payments, measure: p99, max: 250ms }\n  - no_regression: { service: payments, measure: error_rate, within: 10% }\n"},
+		{"tls on grpc", "scenarios: {}\n"},
+		{"jitter equal to delay", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 100ms, jitter: 100ms }\n"},
+		{"duration that covers its faults", "scenarios:\n  a:\n    duration: 30s\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 20s, for: 10s }\n"},
+		{"zero tolerances", "defaults: { latency_within: 0% }\nchecks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},
+		{"all auto scenarios", "auto_scenarios: true\nsuites: { pr: [auto, auto-crash-payments, auto-down-checkout-payments, auto-down-payments-fraud] }\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := config.Parse("kazu.yaml", []byte(mixed+tt.yaml)); err != nil {
+				t.Errorf("rejected:\n%v", err)
+			}
+		})
+	}
+}
+
+// Codes are canonical after loading: digits on http edges, upper-case names
+// on grpc edges, whatever the file wrote.
+func TestStatusCodes(t *testing.T) {
+	accept := map[string]string{
+		"payments -> fraud, fault: errors, rate: 5%, code: 14":           "UNAVAILABLE",
+		"payments -> fraud, fault: errors, rate: 5%, code: unavailable":  "UNAVAILABLE",
+		"payments -> fraud, fault: errors, rate: 5%, code: DATA_LOSS":    "DATA_LOSS",
+		"checkout -> payments, fault: errors, rate: 5%, code: 503":       "503",
+		"checkout -> payments, fault: errors, rate: 5%, code: '503'":     "503",
+		"payments -> fraud, fault: timeout, rate: 5%, code: UNAVAILABLE": "UNAVAILABLE",
+	}
+	for fields, want := range accept {
+		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + fields + " }\n"
+		cfg, err := config.Parse("kazu.yaml", []byte(src))
+		if err != nil {
+			if strings.Contains(fields, "timeout") {
+				continue // timeout takes no code; the schema says so
+			}
+			t.Errorf("%s: %v", fields, err)
+			continue
+		}
+		if got := cfg.Scenarios[0].Faults[0].Code; got != want {
+			t.Errorf("%s: code = %q, want %q", fields, got, want)
+		}
+	}
+	reject := map[string]string{
+		"payments -> fraud, code: 17":          `17 is not a gRPC status code (0 to 16)`,
+		"payments -> fraud, code: UNAVAILABEL": `"UNAVAILABEL" is not a gRPC status code, such as UNAVAILABLE (did you mean "UNAVAILABLE"?)`,
+		"payments -> fraud, code: 503":         `503 is not a gRPC status code (0 to 16)`,
+		"payments -> fraud, code: OK":          `OK is success; errors injects failures, so use a code such as UNAVAILABLE`,
+		"payments -> fraud, code: 0":           `OK is success; errors injects failures, so use a code such as UNAVAILABLE`,
+		"checkout -> payments, code: 200":      `"200" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
+		"checkout -> payments, code: 600":      `"600" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
+	}
+	for field, want := range reject {
+		edge, code, _ := strings.Cut(field, ", ")
+		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + edge + ", fault: errors, rate: 5%, " + code + " }\n"
+		_, err := config.Parse("kazu.yaml", []byte(src))
+		if err == nil || !strings.HasSuffix(err.Error(), want) {
+			t.Errorf("%s: got %v\nwant suffix %s", field, err, want)
+		}
+	}
+}
+
 // Edge problems need their own file: base already declares edges.
 func TestEdgeProblems(t *testing.T) {
 	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
@@ -130,6 +250,7 @@ edges:
   payments -> fraud: { protocol: tcp, tls: { ca_cert: a, ca_key: b } }
   checkout->payments: http
   checkout -> payments: grpc
+  payments -> auth: { protocol: grpc, tls: { ca_cert: a, ca_key: b } }
 `))
 	want := []string{
 		`kazu.yaml:4:3: edges["checkout -> checkout"]: an edge needs two different services; checkout calls itself`,
@@ -161,10 +282,19 @@ func TestLoadChecksSystemPath(t *testing.T) {
 	if _, err := config.Load(p); err != nil {
 		t.Errorf("with the file present: %v", err)
 	}
+	abs := write("kazu-abs.yaml", "system: "+filepath.Join(dir, "compose.yml")+"\ntraffic: { image: grafana/k6:1.0.0 }\n")
+	if _, err := config.Load(abs); err != nil {
+		t.Errorf("with an absolute path: %v", err)
+	}
 
 	p = write("kazu.yaml", "system: { manifests: compose.yml }\ntraffic: { image: grafana/k6:1.0.0 }\n")
 	_, err = config.Load(p)
 	if err == nil || !strings.Contains(err.Error(), "system.manifests: compose.yml is not a directory") {
 		t.Errorf("manifests naming a file: %v", err)
+	}
+	p = write("kazu.yaml", "system: "+dir+"\ntraffic: { image: grafana/k6:1.0.0 }\n")
+	_, err = config.Load(p)
+	if err == nil || !strings.Contains(err.Error(), "is a directory; for rendered manifests write system: { manifests:") {
+		t.Errorf("compose naming a directory: %v", err)
 	}
 }
