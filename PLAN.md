@@ -71,7 +71,7 @@ Order (2026-10-16 foundations review): the networking spike first, then the thin
 
 Networking (derisk first):
 
-- [ ] spike → ADR-0005: reach the trial network from the host. On a GitHub-hosted Linux runner and on macOS, bring the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP and a sealed (`internal`) network; from the host, read the proxy's counters and run a SQL query against `postgres`. Try both options (published ports with URL rewriting; one in-network helper container driven from the host) and record the choice
+- [ ] spike → ADR-0005: Kazu reaches the trial network through one in-network helper container (decided 2026-10-16). Prove it on a GitHub-hosted Linux runner first (CI is what matters; macOS second): the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP, on a sealed (`internal`) network; the host drives the helper over one channel to read the proxy's counters and run a SQL query against `postgres`
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
