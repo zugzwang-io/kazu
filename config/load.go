@@ -3,8 +3,11 @@ package config
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,17 +16,26 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Load reads and validates the config file at path. Errors from the file
-// itself are an *Error.
+// Load reads and validates the config file at path. Relative paths in it
+// (the system file) are resolved against the file's directory. Errors from
+// the file itself are an *Error.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(path, data)
+	cfg, ps := parse(data)
+	if cfg != nil {
+		checkSystemExists(ps, cfg, filepath.Dir(path))
+	}
+	if err := ps.err(path); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
-// Parse validates a config held in memory. file names it in errors.
+// Parse validates a config held in memory. file names it in errors. Paths
+// in the config are not checked; Load does that.
 func Parse(file string, data []byte) (*Config, error) {
 	cfg, ps := parse(data)
 	if err := ps.err(file); err != nil {
@@ -34,7 +46,7 @@ func Parse(file string, data []byte) (*Config, error) {
 
 // parse reports every problem it can see at once. Only invalid YAML and a
 // tree too deep to read stop it early, because nothing after them can be
-// trusted.
+// trusted; the cross-key rules run only on a tree the schema accepted.
 func parse(data []byte) (*Config, *problems) {
 	ps := &problems{}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -67,18 +79,17 @@ func parse(data []byte) (*Config, *problems) {
 		return nil, ps
 	}
 	if err := compiledSchema().Validate(tree); err != nil {
-		var ve *jsonschema.ValidationError
-		if !errors.As(err, &ve) {
-			ps.add(nil, err.Error())
-			return nil, ps
-		}
-		schemaProblems(ps, ve)
+		schemaProblems(ps, err.(*jsonschema.ValidationError)) //nolint:errorlint // Validate only ever returns a *ValidationError
 	}
 	if len(ps.list) > 0 {
 		return nil, ps
 	}
 	d := decoder{ps: ps}
 	cfg := d.config(root)
+	if len(ps.list) > 0 {
+		return nil, ps
+	}
+	validate(ps, root, cfg)
 	if len(ps.list) > 0 {
 		return nil, ps
 	}
@@ -96,4 +107,30 @@ func yamlProblem(err error) Problem {
 		return Problem{Line: line, Message: "invalid YAML: " + m[2]}
 	}
 	return Problem{Message: "invalid YAML: " + strings.TrimPrefix(msg, "yaml: ")}
+}
+
+func checkSystemExists(ps *problems, cfg *Config, dir string) {
+	rel, path := cfg.System.Compose, []string{"system"}
+	if rel == "" {
+		rel, path = cfg.System.Manifests, []string{"system", "manifests"}
+	}
+	full := rel
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(dir, rel)
+	}
+	st, err := os.Stat(full)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		ps.add(path, fmt.Sprintf("%s not found (paths are relative to the config file)", rel))
+	case err != nil:
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		ps.add(path, fmt.Sprintf("%s can't be read: %v", rel, err))
+	case cfg.System.Manifests != "" && !st.IsDir():
+		ps.add(path, fmt.Sprintf("%s is not a directory; manifests names a directory of rendered manifests", rel))
+	case cfg.System.Compose != "" && st.IsDir():
+		ps.add(path, fmt.Sprintf("%s is a directory; for rendered manifests write system: { manifests: %s }", rel, rel))
+	}
 }

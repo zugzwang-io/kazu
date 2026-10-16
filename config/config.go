@@ -13,8 +13,7 @@ import (
 // or empty value after loading is one the user wrote, never one they left out.
 //
 // Config mirrors kazu.schema.json, which publishes where each key's shape
-// is headed, so it can hold more than the running build does; the loader
-// rejects that rest as not supported yet.
+// is headed, so it can hold more than the running build acts on.
 type Config struct {
 	System      System
 	Traffic     Service
@@ -305,9 +304,8 @@ type Metric struct {
 	NoData Severity
 }
 
-// Suite is a named set of scenarios. All means every scenario. Otherwise
-// Scenarios lists names as written, where "auto" stands for every auto
-// scenario (not supported yet).
+// Suite is a named set of scenarios. All means every scenario; otherwise
+// Scenarios lists scenario names as written.
 type Suite struct {
 	Name      string
 	All       bool
