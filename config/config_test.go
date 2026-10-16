@@ -12,7 +12,7 @@ import (
 
 // The documented configs load cleanly and decode to what they say.
 func TestReference(t *testing.T) {
-	cfg, err := config.Load("testdata/reference.yaml")
+	cfg, err := config.LoadContract("testdata/reference.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,14 +158,14 @@ func TestReadmeExamples(t *testing.T) {
 		t.Fatal("README.md has no yaml example")
 	}
 	for i, example := range examples {
-		if _, err := config.Parse("README.md", []byte(example)); err != nil {
+		if _, err := config.ParseContract("README.md", []byte(example)); err != nil {
 			t.Errorf("yaml block %d: %v", i, err)
 		}
 	}
 }
 
 func TestWalkthrough(t *testing.T) {
-	cfg, err := config.Load("testdata/walkthrough.yaml")
+	cfg, err := config.LoadContract("testdata/walkthrough.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ connections:
 
 func parse(t *testing.T, tail string) *config.Config {
 	t.Helper()
-	cfg, err := config.Parse("kazu.yaml", []byte(base+tail))
+	cfg, err := config.ParseContract("kazu.yaml", []byte(base+tail))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestRejectsLossyNumbers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.Parse("kazu.yaml", []byte(base+tt.tail))
+			_, err := config.ParseContract("kazu.yaml", []byte(base+tt.tail))
 			if err == nil {
 				t.Fatal("accepted")
 			}
@@ -270,7 +270,7 @@ func TestRejectsLossyNumbers(t *testing.T) {
 // the lookup.
 func TestEdgeNameSpacing(t *testing.T) {
 	for _, spelling := range []string{"a -> b", "a->b", "  a  ->   b  "} {
-		cfg, err := config.Parse("kazu.yaml", []byte("system: x\ntraffic: { image: x }\nedges: { '"+spelling+"': http }\nscenarios: { s: { faults: [ { edge: '"+spelling+"', fault: down } ] } }\n"))
+		cfg, err := config.ParseContract("kazu.yaml", []byte("system: x\ntraffic: { image: x }\nedges: { '"+spelling+"': http }\nscenarios: { s: { faults: [ { edge: '"+spelling+"', fault: down } ] } }\n"))
 		if err != nil {
 			t.Fatalf("%q: %v", spelling, err)
 		}
@@ -287,7 +287,7 @@ func TestEdgeNameSpacing(t *testing.T) {
 }
 
 func TestChecks(t *testing.T) {
-	cfg, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
+	cfg, err := config.ParseContract("kazu.yaml", []byte(`system: docker-compose.yml
 traffic: { image: grafana/k6:1.0.0 }
 edges: { traffic -> checkout: http, checkout -> postgres: tcp }
 connections: { postgres: postgres://postgres:dev@postgres/shop, api: http://checkout:8080 }
@@ -349,7 +349,7 @@ scenarios:
 }
 
 func TestSystemAndScenarioShapes(t *testing.T) {
-	cfg, err := config.Parse("kazu.yaml", []byte("system: { manifests: ./k8s/rendered }\ntraffic: { image: x }\nscenarios:\n  baseline:\n  empty: {}\n"))
+	cfg, err := config.ParseContract("kazu.yaml", []byte("system: { manifests: ./k8s/rendered }\ntraffic: { image: x }\nscenarios:\n  baseline:\n  empty: {}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,20 +375,20 @@ func TestParseErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.Parse("kazu.yaml", []byte(tt.src))
+			_, err := config.ParseContract("kazu.yaml", []byte(tt.src))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want %q", err, tt.want)
 			}
 		})
 	}
-	if _, err := config.Load("testdata/missing.yaml"); err == nil || !strings.Contains(err.Error(), "missing.yaml") {
+	if _, err := config.LoadContract("testdata/missing.yaml"); err == nil || !strings.Contains(err.Error(), "missing.yaml") {
 		t.Errorf("Load of a missing file = %v", err)
 	}
 }
 
 // YAML anchors and merge keys mean what they mean in compose files.
 func TestAnchorsAndMerges(t *testing.T) {
-	_, err := config.Parse("kazu.yaml", []byte(base+`
+	_, err := config.ParseContract("kazu.yaml", []byte(base+`
 x-fault: &slow { fault: latency, delay: 1s, after: 20s }
 scenarios:
   a:
@@ -426,7 +426,7 @@ scenarios:
 }
 
 func TestEnvironmentForms(t *testing.T) {
-	cfg, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
+	cfg, err := config.ParseContract("kazu.yaml", []byte(`system: docker-compose.yml
 traffic:
   image: grafana/k6:1.0.0
   environment: [FLOW=browse, RATE=50, "EMPTY=", "URL=a=b"]

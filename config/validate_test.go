@@ -11,10 +11,9 @@ import (
 	"github.com/zugzwang-io/kazu/config"
 )
 
-// Row S3 in examples/shop/SPEC.md: a request-count trigger on a TCP edge
-// is a config error before any trial.
+// A request-count trigger on a TCP edge is a config error before any trial.
 func TestRequestCountTriggerOnTCPEdge(t *testing.T) {
-	_, err := config.Parse("kazu.yaml", []byte(base+`
+	_, err := config.ParseContract("kazu.yaml", []byte(base+`
 scenarios:
   s3:
     faults:
@@ -93,27 +92,66 @@ func TestRules(t *testing.T) {
 		{"quoted success code on an HTTP edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 5%, code: '200' }\n", []string{
 			`13:70: scenarios.a.faults[0].code: "200" is not an HTTP error status; errors injects failures, so use a number from 400 to 599, such as 503`,
 		}},
-		{"defaults", "defaults: { error_rate_within: 150pp, recovers_within: 0s }\n", []string{
-			`10:32: defaults.error_rate_within: can't exceed 100pp`,
-			`10:56: defaults.recovers_within: must be longer than zero`,
-		}},
 		{"reserved scenario names", "scenarios:\n  auto-x: {}\n  all: {}\n", []string{
 			`11:3: scenarios.auto-x: "auto-x" is reserved: "all" and "auto" are suite keywords, and names starting with "auto-" belong to generated scenarios`,
 			`12:3: scenarios.all: "all" is reserved: "all" and "auto" are suite keywords, and names starting with "auto-" belong to generated scenarios`,
 		}},
 		{"suite entries", "scenarios:\n  db-blip: {}\nsuites:\n  pr: [db-blpi, auto, all]\n", []string{
 			`13:8: suites.pr[0]: no scenario named "db-blpi" (did you mean "db-blip"?)`,
-			`13:17: suites.pr[1]: auto is a generated scenario; set auto_scenarios: true to generate them`,
 			`13:23: suites.pr[2]: "all" is written as the suite's value (pr: all), not as an entry in its list`,
-		}},
-		{"auto scenario names", "auto_scenarios: true\nsuites:\n  pr: [auto-crash-payments, auto-down-checkout-payments, auto-down-traffic-checkout, auto-crash-traffic, auto]\n", []string{
-			`12:58: suites.pr[2]: no scenario named "auto-down-traffic-checkout"`,
-			`12:86: suites.pr[3]: traffic is the load, not part of the system; no crash scenario is generated for it`,
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.Parse("kazu.yaml", []byte(base+tt.yaml))
+			_, err := config.ParseContract("kazu.yaml", []byte(base+tt.yaml))
+			var got []string
+			if err != nil {
+				for _, line := range strings.Split(err.Error(), "\n") {
+					got = append(got, strings.TrimPrefix(line, "kazu.yaml:"))
+				}
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
+}
+
+// from names a fault in the same scenario, not itself, with an end if its
+// end is used, and faults don't count from each other in a loop.
+func TestAnchorRules(t *testing.T) {
+	tests := []struct {
+		name, yaml string
+		want       []string
+	}{
+		{"unknown fault", "scenarios:\n  a:\n    faults:\n      - { name: slow-pay, edge: checkout -> payments, fault: down, for: 5s }\n      - { edge: checkout -> postgres, fault: down, from: slow-pya }\n", []string{
+			`14:58: scenarios.a.faults[1].from: no fault named "slow-pya" in this scenario (did you mean "slow-pay"?)`,
+		}},
+		{"itself", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, for: 5s, from: x }\n", []string{
+			`13:76: scenarios.a.faults[0].from: a fault can't count from itself`,
+		}},
+		{"end of a fault without for", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { edge: checkout -> postgres, fault: down, from: [{ start: x }, x] }\n", []string{
+			`14:73: scenarios.a.faults[1].from[1]: x has no for, so it lasts until traffic ends; give it a for, or count from { start: x }`,
+		}},
+		{"end of a crash", "scenarios:\n  a:\n    faults:\n      - { name: x, service: payments, fault: crash }\n      - { edge: checkout -> postgres, fault: down, from: x }\n", []string{
+			`14:58: scenarios.a.faults[1].from: a crash is instant, so x has no end; count from { start: x }`,
+		}},
+		{"two faults with one name", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: x, edge: checkout -> postgres, fault: down }\n", []string{
+			`14:17: scenarios.a.faults[1].name: another fault in this scenario is already named "x"`,
+		}},
+		{"a loop", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, for: 5s, from: z }\n      - { name: y, edge: checkout -> postgres, fault: down, for: 5s, from: { start: x } }\n      - { name: z, edge: payments -> postgres, fault: down, for: 5s, from: y }\n", []string{
+			`13:76: scenarios.a.faults[0].from: faults count from each other in a loop: x -> z -> y -> x`,
+		}},
+		{"names belong to their scenario", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, for: 5s }\n  b:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: x }\n", []string{
+			`16:58: scenarios.b.faults[0].from: no fault named "x" in this scenario`,
+		}},
+		{"scenario check named like a top-level one", "checks:\n  - { name: c, sql: { on: postgres, query: x, expect: empty } }\nscenarios:\n  a:\n    checks:\n      - { name: c, sql: { on: postgres, query: y, expect: empty } }\n", []string{
+			`15:17: scenarios.a.checks[0].name: another check is already named "c"`,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.ParseContract("kazu.yaml", []byte(base+tt.yaml))
 			var got []string
 			if err != nil {
 				for _, line := range strings.Split(err.Error(), "\n") {
@@ -129,7 +167,7 @@ func TestRules(t *testing.T) {
 
 // Check rules need a second connection, so they get their own document.
 func TestCheckRules(t *testing.T) {
-	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
+	_, err := config.ParseContract("kazu.yaml", []byte(`system: docker-compose.yml
 traffic: { image: grafana/k6:1.0.0 }
 edges:
   traffic -> checkout: http
@@ -183,13 +221,15 @@ func TestRulesAccept(t *testing.T) {
 		{"measured service with mixed inbound edges", "checks:\n  - recovers: { service: payments, within: 30s }\n  - slo: { service: payments, measure: p99, max: 250ms }\n  - no_regression: { service: payments, measure: error_rate, within: 10% }\n"},
 		{"tls on grpc", "scenarios: {}\n"},
 		{"jitter equal to delay", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 100ms, jitter: 100ms }\n"},
+		{"anchors: a join, and the start of a fault without for", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: y, edge: worker -> payments, fault: down, for: 5s, from: { start: x } }\n      - { edge: payments -> fraud, fault: down, from: [y, { start: x }], after: 1s }\n"},
+		{"duration check skips anchored faults", "scenarios:\n  a:\n    duration: 10s\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, after: 1s, for: 5s }\n      - { edge: worker -> payments, fault: down, from: x, after: 20s }\n"},
 		{"duration that covers its faults", "scenarios:\n  a:\n    duration: 30s\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 20s, for: 10s }\n"},
-		{"zero tolerances", "defaults: { latency_within: 0% }\nchecks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},
-		{"all auto scenarios", "auto_scenarios: true\nsuites: { pr: [auto, auto-crash-payments, auto-down-checkout-payments, auto-down-payments-fraud] }\n"},
+		{"zero tolerance", "checks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},
+		{"generated scenarios, which the build check rejects", "suites: { pr: [auto, auto-crash-payments, auto-down-checkout-payments] }\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := config.Parse("kazu.yaml", []byte(mixed+tt.yaml)); err != nil {
+			if _, err := config.ParseContract("kazu.yaml", []byte(mixed+tt.yaml)); err != nil {
 				t.Errorf("rejected:\n%v", err)
 			}
 		})
@@ -209,7 +249,7 @@ func TestStatusCodes(t *testing.T) {
 	}
 	for fields, want := range accept {
 		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + fields + " }\n"
-		cfg, err := config.Parse("kazu.yaml", []byte(src))
+		cfg, err := config.ParseContract("kazu.yaml", []byte(src))
 		if err != nil {
 			if strings.Contains(fields, "timeout") {
 				continue // timeout takes no code; the schema says so
@@ -233,7 +273,7 @@ func TestStatusCodes(t *testing.T) {
 	for field, want := range reject {
 		edge, code, _ := strings.Cut(field, ", ")
 		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + edge + ", fault: errors, rate: 5%, " + code + " }\n"
-		_, err := config.Parse("kazu.yaml", []byte(src))
+		_, err := config.ParseContract("kazu.yaml", []byte(src))
 		if err == nil || !strings.HasSuffix(err.Error(), want) {
 			t.Errorf("%s: got %v\nwant suffix %s", field, err, want)
 		}
@@ -242,7 +282,7 @@ func TestStatusCodes(t *testing.T) {
 
 // Edge problems need their own file: base already declares edges.
 func TestEdgeProblems(t *testing.T) {
-	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
+	_, err := config.ParseContract("kazu.yaml", []byte(`system: docker-compose.yml
 traffic: { image: grafana/k6:1.0.0 }
 edges:
   checkout -> checkout: tcp
@@ -288,7 +328,7 @@ func TestLoadChecksSystemPath(t *testing.T) {
 	}
 
 	p = write("kazu.yaml", "system: { manifests: compose.yml }\ntraffic: { image: grafana/k6:1.0.0 }\n")
-	_, err = config.Load(p)
+	_, err = config.LoadContract(p)
 	if err == nil || !strings.Contains(err.Error(), "system.manifests: compose.yml is not a directory") {
 		t.Errorf("manifests naming a file: %v", err)
 	}

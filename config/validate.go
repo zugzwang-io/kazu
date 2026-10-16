@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,18 +22,20 @@ type validator struct {
 	cfg  *Config
 }
 
-func validate(ps *problems, root *yaml.Node, cfg *Config) {
+func validate(ps *problems, root *yaml.Node, cfg *Config, built bool) {
 	v := validator{ps: ps, root: root, cfg: cfg}
 	v.edges()
+	top := v.checks([]string{"checks"}, cfg.Checks, nil)
 	for _, s := range cfg.Scenarios {
-		v.scenario(s)
+		v.scenario(s, top)
 	}
-	v.defaults()
-	v.checks()
 	for _, s := range cfg.Suites {
 		for i, name := range s.Scenarios {
 			v.suiteEntry([]string{"suites", s.Name, strconv.Itoa(i)}, name)
 		}
+	}
+	if built {
+		v.unsupported()
 	}
 }
 
@@ -67,7 +70,9 @@ func (v *validator) edges() {
 	}
 }
 
-func (v *validator) scenario(s Scenario) {
+// scenario checks one scenario. taken holds the top-level check names,
+// which run in every scenario alongside its own.
+func (v *validator) scenario(s Scenario, taken map[string]bool) {
 	path := []string{"scenarios", s.Name}
 	if s.Name == "auto" || s.Name == "all" || strings.HasPrefix(s.Name, "auto-") {
 		v.ps.addKey(path, fmt.Sprintf("%q is reserved: \"all\" and \"auto\" are suite keywords, and names starting with \"auto-\" belong to generated scenarios", s.Name))
@@ -75,12 +80,15 @@ func (v *validator) scenario(s Scenario) {
 	for i := range s.Faults {
 		v.fault(append(slices.Clone(path), "faults", strconv.Itoa(i)), &s.Faults[i])
 	}
+	v.anchors(path, s.Faults)
+	v.checks(append(slices.Clone(path), "checks"), s.Checks, taken)
 	if v.node(append(path, "duration")...) == nil {
 		return
 	}
 	v.positive(append(path, "duration"), s.Duration)
 	for i, f := range s.Faults {
-		if end := f.After + f.For; f.After > 0 && end > s.Duration {
+		// Anchored faults' times resolve when the plan is built.
+		if end := f.After + f.For; f.From == nil && f.After > 0 && end > s.Duration {
 			v.ps.add(append(path, "duration"), fmt.Sprintf("traffic stops at %s, before faults[%d] ends at %s; the fault would not be exercised", s.Duration, i, end))
 		}
 	}
@@ -148,6 +156,97 @@ func (v *validator) fault(path []string, ft *Fault) {
 	}
 }
 
+// anchors checks what each fault's from names: a fault in the same
+// scenario, not itself, with an end if its end is used, and no loops.
+func (v *validator) anchors(path []string, faults []Fault) {
+	at := func(i int, keys ...string) []string {
+		return append(append(slices.Clone(path), "faults", strconv.Itoa(i)), keys...)
+	}
+	byName := map[string]int{}
+	var names []string
+	for i, f := range faults {
+		if f.Name == "" {
+			continue
+		}
+		if _, dup := byName[f.Name]; dup {
+			v.ps.add(at(i, "name"), fmt.Sprintf("another fault in this scenario is already named %q", f.Name))
+			continue
+		}
+		byName[f.Name] = i
+		names = append(names, f.Name)
+	}
+	next := make([][]int, len(faults))
+	for i, f := range faults {
+		list := v.node(at(i, "from")...)
+		for j, a := range f.From {
+			apath := at(i, "from")
+			if list != nil && list.Kind == yaml.SequenceNode {
+				apath = append(apath, strconv.Itoa(j))
+			}
+			k, ok := byName[a.Fault]
+			switch {
+			case !ok:
+				v.ps.add(apath, fmt.Sprintf("no fault named %q in this scenario", a.Fault)+suggest(a.Fault, names))
+			case k == i:
+				v.ps.add(apath, "a fault can't count from itself")
+			case a.Start:
+				next[i] = append(next[i], k)
+			case faults[k].Kind == Crash:
+				v.ps.add(apath, fmt.Sprintf("a crash is instant, so %s has no end; count from { start: %s }", a.Fault, a.Fault))
+			case v.node(at(k, "for")...) == nil:
+				v.ps.add(apath, fmt.Sprintf("%s has no for, so it lasts until traffic ends; give it a for, or count from { start: %s }", a.Fault, a.Fault))
+			default:
+				next[i] = append(next[i], k)
+			}
+		}
+	}
+	for _, loop := range loops(next) {
+		var chain []string
+		for _, i := range loop {
+			chain = append(chain, faults[i].Name)
+		}
+		chain = append(chain, chain[0])
+		v.ps.add(at(loop[0], "from"), "faults count from each other in a loop: "+strings.Join(chain, " -> "))
+	}
+}
+
+// loops returns each cycle in the graph next once, starting at its
+// lowest-numbered node, in order of that node.
+func loops(next [][]int) [][]int {
+	const (
+		unseen = iota
+		open
+		done
+	)
+	state := make([]int, len(next))
+	var stack []int
+	var found [][]int
+	var visit func(i int)
+	visit = func(i int) {
+		state[i] = open
+		stack = append(stack, i)
+		for _, k := range next[i] {
+			switch state[k] {
+			case unseen:
+				visit(k)
+			case open:
+				loop := slices.Clone(stack[slices.Index(stack, k):])
+				lo := slices.Index(loop, slices.Min(loop))
+				found = append(found, append(loop[lo:], loop[:lo]...))
+			}
+		}
+		stack = stack[:len(stack)-1]
+		state[i] = done
+	}
+	for i := range next {
+		if state[i] == unseen {
+			visit(i)
+		}
+	}
+	slices.SortFunc(found, func(a, b []int) int { return a[0] - b[0] })
+	return found
+}
+
 // requestTrigger checks that an after_requests trigger has requests to
 // count: the proxy parses requests only on http and grpc edges.
 func (v *validator) requestTrigger(path []string, ft Fault, edge Edge) {
@@ -208,19 +307,15 @@ func statusCode(p Protocol, v string) (string, string) {
 	return name, ""
 }
 
-func (v *validator) defaults() {
-	if v.cfg.Defaults.ErrorRateWithin > 100 {
-		v.ps.add([]string{"defaults", "error_rate_within"}, "can't exceed 100pp")
+// checks checks one checks list. taken holds the names of checks that run
+// alongside it; the result adds this list's.
+func (v *validator) checks(list []string, cs []Check, taken map[string]bool) map[string]bool {
+	names := maps.Clone(taken)
+	if names == nil {
+		names = map[string]bool{}
 	}
-	if v.node("defaults", "recovers_within") != nil {
-		v.positive([]string{"defaults", "recovers_within"}, v.cfg.Defaults.RecoversWithin)
-	}
-}
-
-func (v *validator) checks() {
-	names := map[string]bool{}
-	for i, c := range v.cfg.Checks {
-		path := []string{"checks", strconv.Itoa(i)}
+	for i, c := range cs {
+		path := append(slices.Clone(list), strconv.Itoa(i))
 		at := func(keys ...string) []string { return append(slices.Clone(path), keys...) }
 		if names[c.Name] {
 			v.ps.add(at("name"), fmt.Sprintf("another check is already named %q", c.Name))
@@ -250,6 +345,7 @@ func (v *validator) checks() {
 			}
 		}
 	}
+	return names
 }
 
 // connection checks that a check's connection exists and has a URL scheme
@@ -304,39 +400,20 @@ func (v *validator) suiteEntry(path []string, name string) {
 		v.ps.add(path, `"all" is written as the suite's value (pr: all), not as an entry in its list`)
 		return
 	}
-	isAuto := name == "auto" || strings.HasPrefix(name, "auto-")
-	if isAuto && !v.cfg.AutoScenarios {
-		v.ps.add(path, fmt.Sprintf("%s is a generated scenario; set auto_scenarios: true to generate them", name))
-		return
-	}
-	switch {
-	case name == "auto":
-		return
-	case name == "auto-crash-"+Traffic:
-		v.ps.add(path, "traffic is the load, not part of the system; no crash scenario is generated for it")
-		return
-	case strings.HasPrefix(name, "auto-crash-") && len(name) > len("auto-crash-"):
-		// Services come from the system file, which the driver reads.
-		return
-	case strings.HasPrefix(name, "auto-down-"):
-		for _, e := range v.cfg.Edges {
-			if !e.UserFacing() && name == "auto-down-"+e.Caller+"-"+e.Callee {
-				return
-			}
-		}
+	if generated(name) {
+		return // generated scenarios are not supported yet; see unsupported
 	}
 	var names []string
 	for _, s := range v.cfg.Scenarios {
 		names = append(names, s.Name)
 	}
-	if v.cfg.AutoScenarios {
-		for _, e := range v.cfg.Edges {
-			if !e.UserFacing() {
-				names = append(names, "auto-down-"+e.Caller+"-"+e.Callee)
-			}
-		}
-	}
 	v.ps.add(path, fmt.Sprintf("no scenario named %q", name)+suggest(name, names))
+}
+
+// generated reports whether a suite entry names generated scenarios:
+// "auto", or one auto scenario.
+func generated(name string) bool {
+	return name == "auto" || strings.HasPrefix(name, "auto-")
 }
 
 func (v *validator) edgeNames() []string {
