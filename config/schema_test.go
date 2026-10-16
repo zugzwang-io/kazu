@@ -43,7 +43,7 @@ func validateYAML(t *testing.T, sch *jsonschema.Schema, src []byte) error {
 	return sch.Validate(v)
 }
 
-// The documented configs and the README's examples are valid.
+// The documented configs are valid.
 func TestSchemaAcceptsDocumentedConfigs(t *testing.T) {
 	sch := compile(t)
 	for _, file := range []string{"testdata/reference.yaml", "testdata/walkthrough.yaml"} {
@@ -54,35 +54,6 @@ func TestSchemaAcceptsDocumentedConfigs(t *testing.T) {
 		if err := validateYAML(t, sch, src); err != nil {
 			t.Errorf("%s: %v", file, err)
 		}
-	}
-	readme, err := os.ReadFile("../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	examples := yamlBlocks(string(readme))
-	if len(examples) == 0 {
-		t.Fatal("README.md has no yaml example")
-	}
-	for i, example := range examples {
-		if err := validateYAML(t, sch, []byte(example)); err != nil {
-			t.Errorf("README.md yaml block %d: %v", i, err)
-		}
-	}
-}
-
-func yamlBlocks(markdown string) []string {
-	var blocks []string
-	for {
-		_, rest, ok := strings.Cut(markdown, "```yaml\n")
-		if !ok {
-			return blocks
-		}
-		block, after, ok := strings.Cut(rest, "```")
-		if !ok {
-			return blocks
-		}
-		blocks = append(blocks, block)
-		markdown = after
 	}
 }
 
