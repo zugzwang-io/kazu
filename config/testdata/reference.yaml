@@ -37,7 +37,7 @@ scenarios:
       - { edge: checkout -> payments, fault: down, after: 20s, for: 20s }
   soak:
     traffic: { command: [run, /load/soak.js] }
-    duration: 180s
+    env: { traffic: { DURATION: 180s } }
     faults:
       - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
   rare-errors:

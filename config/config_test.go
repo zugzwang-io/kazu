@@ -84,7 +84,7 @@ func TestReference(t *testing.T) {
 		t.Errorf("browse-under-outage env = %+v", browse.Env)
 	}
 	soak, _ := cfg.Scenario("soak")
-	if soak.Duration != 180*time.Second || soak.Traffic == nil || !reflect.DeepEqual(soak.Traffic.Command, []string{"run", "/load/soak.js"}) || soak.Traffic.Volumes != nil {
+	if soak.Traffic == nil || !reflect.DeepEqual(soak.Traffic.Command, []string{"run", "/load/soak.js"}) || soak.Traffic.Volumes != nil {
 		t.Errorf("soak = %+v, traffic %+v", soak, soak.Traffic)
 	}
 	rare, _ := cfg.Scenario("rare-errors")

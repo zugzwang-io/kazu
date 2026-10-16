@@ -98,7 +98,9 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Money has moved: record it even if the caller has gone away meanwhile.
-	c, err := s.Store.InsertOnce(context.WithoutCancel(ctx), Charge{ID: chargeID, OrderID: body.OrderID, IdempotencyKey: key, AmountCents: body.AmountCents})
+	wctx, cancel := svc.Detach(ctx)
+	defer cancel()
+	c, err := s.Store.InsertOnce(wctx, Charge{ID: chargeID, OrderID: body.OrderID, IdempotencyKey: key, AmountCents: body.AmountCents})
 	if err != nil {
 		slog.Error("record charge", "key", key, "err", err)
 		http.Error(w, "database unavailable", http.StatusInternalServerError)

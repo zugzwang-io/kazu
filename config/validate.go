@@ -79,16 +79,6 @@ func (v *validator) scenario(s Scenario, taken map[string]bool) {
 	}
 	v.anchors(path, s.Faults)
 	v.checks(append(slices.Clone(path), "checks"), s.Checks, taken)
-	if v.node(append(path, "duration")...) == nil {
-		return
-	}
-	v.positive(append(path, "duration"), s.Duration)
-	for i, f := range s.Faults {
-		// Anchored faults' times resolve when the plan is built.
-		if end := f.After + f.For; f.From == nil && end > s.Duration {
-			v.ps.add(append(path, "duration"), fmt.Sprintf("traffic stops at %s, before faults[%d] ends at %s; the fault would not be exercised", s.Duration, i, end))
-		}
-	}
 }
 
 // fault checks one fault against the edges and writes its canonical status

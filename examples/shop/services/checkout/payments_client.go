@@ -93,6 +93,10 @@ func (p *PaymentsClient) attempt(ctx context.Context, o Order) attemptResult {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", o.IdempotencyKey)
+	// One attempt, one request: net/http would otherwise resend an
+	// Idempotency-Key request whose reused connection reset, and a shed
+	// resend would hide that the first one may have charged.
+	req.GetBody = nil
 
 	resp, err := p.HTTP.Do(req)
 	if err != nil {

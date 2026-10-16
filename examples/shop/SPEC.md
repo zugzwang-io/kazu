@@ -137,12 +137,12 @@ Every service uses the standard OpenTelemetry Go SDK and exports over OTLP to `O
 
 ## Traffic
 
-`load/traffic.js`: Kazu's k6 template (DESIGN.md §4.3), edited the way a customer would, run in `grafana/k6`. Kazu starts it once the system is ready; it sends at a constant arrival rate and exits after `KAZU_DURATION`.
+`load/traffic.js`: Kazu's k6 template (DESIGN.md §4.3), edited the way a customer would, run in `grafana/k6`. Kazu starts it once the system is ready; it sends at a constant arrival rate and exits after `DURATION`.
 
 | Env var | Set by | Effect |
 |---|---|---|
 | `KAZU_SEED` | Kazu | Idempotency keys and amounts derive from it, so base and head send the same sequence. Amounts: about 70% below 1,000 cents, 30% at or above (so the fraud edge is exercised), and about 1% above the fraud limit |
-| `KAZU_DURATION` | Kazu | Per scenario |
+| `DURATION` | the scenario's `env` | How long to send; 120 s unless a scenario changes it |
 | `FLOW` | `kazu.yaml` | Weighted mix: `checkout` (create an order, then read it) and `browse` (read paid orders). Default `checkout:7,browse:3` |
 | `RATE` | template default | 100 iterations/s |
 | `DUPLICATE_RATE` | `kazu.yaml` | Fraction of orders submitted twice at once with the same key, like double-clicks. Default 0; the shop's config will use 0.05, and 0.3 in `double_click` |
@@ -185,7 +185,7 @@ Each is a mistake a reasonable developer could make in a reviewed PR, and must p
 | `SHOP_BUG_SHARED_POOL` | checkout | Holds its database connection while calling payments, to update the order in the same transaction | Correct results; pool starvation needs concurrency and a slow dependency |
 | `SHOP_BUG_POOL_LEAK` | payments | When the fraud call fails, returns 503 without releasing its database connection until a 5 s timeout | Correct results; the pool only drains under concurrent load |
 | `SHOP_BUG_NO_RECONNECT` | payments | Opens one `pgx.Conn` at startup "for performance" instead of a pool, and never redials | Tests never restart the database mid-test |
-| `SHOP_BUG_RACE_P=<p>` | payments | With probability `p` per request, skips the advisory lock, leaving a bare check-then-insert. Uses the service's own unseeded RNG on purpose: nondeterminism Kazu does not control | Needs concurrent duplicate requests |
+| `SHOP_BUG_RACE_P=<p>` | payments | With probability `p` per request, skips the advisory lock, leaving a bare check-then-insert. Uses the service's own unseeded RNG on purpose: nondeterminism Kazu does not control | **Likely disqualified as drafted:** the step-1 suite already sends concurrent duplicate requests (ten at once per key, in the integration and store tests), so it would catch the bare check-then-insert. Redesign before step 3; V9, S5 and S6 and the verdict spike depend on it |
 | `SHOP_BUG_NO_SHEDDING` | payments | The concurrency limit is removed "to stop rejecting customers"; requests queue instead | Correct results; queueing only hurts near capacity |
 | `SHOP_BUG_ACK_BEFORE_WRITE` | worker | Acks the message, then writes ledger entries, with a fixed 50 ms gap | Needs a crash in that window |
 | `SHOP_BUG_REQUEUE_FOREVER` | worker | Failed messages are requeued without a delivery limit, so nothing is dead-lettered | The dead-letter unit test is removed with the feature; harm needs a message that can never succeed |
@@ -237,6 +237,7 @@ Configs written for the test (in `safety/`), each targeting one of Kazu's own me
 | S1 | trap `PAYMENTS_BY_IP` | `RETRY_NEW_KEY` + trap `PAYMENTS_BY_IP` | latency on `checkout -> payments` | **not exercised**, never `pass` | The landed check: no false pass when a fault can't land | 1 |
 | S2 | — | — | `down` on `payments -> postgres` only | `pass`; proxy counters show checkout's database traffic untouched | Per-edge routing: one caller's alias doesn't leak to another | 1 |
 | S3 | — | — | an `after_requests` trigger on `checkout -> postgres` (TCP) | **config error** before any trial | Request-count triggers are rejected on TCP edges | 1 |
+| S14 | — | `TIMEOUT_AS_FAILURE` | `payments_slow` | `REGRESSED`, caught by the "failed order with a charge" `sql` check | Base vs head: a check that passes on base and fails on head is a regression, so a Kazu that passes everything fails the gate | 1 |
 | S4 | `RETRY_NEW_KEY` | `RETRY_NEW_KEY` | `payments_slow` | `pass` (violation in both) | Regression, not violation, gates | 3 |
 | S5 | `RACE_P=0.1` | `RACE_P=0.1` | `double_click` | `flaky`, not regressed | Flake classification | 3 |
 | S6 | — | `RACE_P=0.1` | `double_click` | `REGRESSED` given enough trials | Statistical power of adaptive trials | 3 |
@@ -303,19 +304,21 @@ A separate Go module keeps the services' dependencies out of Kazu's `go.mod`, an
 
 | Step | Shop adds | Rows |
 |---|---|---|
-| 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, the shop test suite; `load/traffic.js` with the Kazu config; `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3 |
+| 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, the shop test suite; `load/traffic.js` with the Kazu config; `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3, S14 |
 | 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC); the per-flag test run; redesign or replace `RETRY_NEW_KEY` and `TIMEOUT_AS_FAILURE`, which the integration suite catches (V1, V2 and the quickstart use them; mechanics rows S1, S4 and S12 can keep them, since those rows test Kazu, not the bug) | V1, V2 |
 | 3 | `NO_DEADLINE_PROPAGATION`, `SHARED_POOL`, `RACE_P`, `NO_SHEDDING`, `SCHEMA_V2` trap, `expectations.yaml` asserter | V3, V6, V9, V10, S4–S9 |
 | 4 | `worker`, `rabbitmq`, `otel-collector` and telemetry, `UNBOUNDED_RETRY_QUEUE`, `RETRY_NO_BACKOFF`, `POOL_LEAK`, `NO_RECONNECT`, `ACK_BEFORE_WRITE`, `REQUEUE_FOREVER`, `NO_OTEL` trap, `k8s/rendered/` | V4, V5, V7, V8, V11, V12, S10–S13 |
 
-Bug rows run the shop's whole config; until step 4, scenarios and checks Kazu can't yet support are marked as skipped in the record, not removed from the config.
+Bug rows run the shop's whole config, which uses only what Kazu implements: the schema accepts only what's built before the first release, so a scenario or check Kazu can't run yet is added when it can, and its rows are marked skipped in `expectations.yaml` until then.
+
+Every config includes a liveness check (`select 'no paid orders' where not exists (select 1 from checkout.orders where status = 'paid')`): a zero-row `sql` check passes when traffic never reached the system, so without it a Kazu that miswires traffic passes every row.
 
 ## Behaviour decisions
 
 Choices that matter to a bug, recorded as the code makes them.
 
 - **Payments follows the caller's context while charging.** If checkout gives up, payments' call to fakestripe is cancelled, like any Go handler using the request context. Fakestripe still charges (a real processor doesn't notice the caller leaving), so the charge exists at the processor with no row yet; the retry with the same key gets the same processor charge back and records it.
-- **The charge row is written after the processor call**, under the advisory lock, on a context detached from the caller: once money has moved it is recorded even if the caller has gone.
+- **The charge row is written after the processor call**, under the advisory lock, on a context detached from the caller: once money has moved it is recorded even if the caller has gone. The detached write still has a 5 s deadline, longer than the statement timeout, so a database that stops answering can't hold it, and the request slot behind it, until TCP gives up.
 - **Checkout resolves an order on a detached context** for the same reason: a paid order is marked paid even if the client hung up.
 - **After retries run out, an order whose outcome is unknown stays `pending`** and the reconciler retries it with the same key every 5 s; there is no terminal "unknown" state. Orders whose every attempt was refused or shed fail.
 
@@ -323,4 +326,6 @@ Choices that matter to a bug, recorded as the code makes them.
 
 - Whether `blackhole` lands in step 1 or 2 of the proxy.
 - Whether a latency fault delays the request or the response (a Kazu proxy choice; decided in its PR).
+
+Decided for the proxy, because the shop's outcome rules depend on it: `down` **refuses** new connections (ECONNREFUSED, which checkout treats as definitely not processed → `failed`) and **resets** live ones (an unknown outcome → `pending`). Accepting and then closing would turn a dead service into an unknown outcome.
 - Whether the worker processes messages concurrently (step 4).

@@ -1,7 +1,7 @@
 # ADR-0003: v1.0 ships the compose driver only; the K3s driver is v1.1
 
 Date: 2026-10-14
-Status: Proposed (Varun agreed in the #27 discussion; status change is his)
+Status: Accepted (2026-10-16)
 
 ## Context
 

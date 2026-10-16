@@ -1,5 +1,6 @@
 // Package svc holds what every shop service shares: reading the env vars
-// that configure it, and its HTTP plumbing.
+// that configure it, its HTTP plumbing, and the context for writes that must
+// outlive their caller.
 package svc
 
 import (
@@ -79,4 +80,17 @@ func WriteJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// DetachTimeout bounds a write that must outlive its caller. It is longer
+// than the services' statement timeout, so the database gives up first when
+// it is answering at all, but a database that stops answering can't hold the
+// write, and the request slot behind it, until TCP gives up minutes later.
+const DetachTimeout = 5 * time.Second
+
+// Detach returns a context that ignores the caller's cancellation, for
+// writes that must happen once money has moved, but still ends after
+// DetachTimeout.
+func Detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), DetachTimeout)
 }

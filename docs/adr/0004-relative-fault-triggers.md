@@ -21,7 +21,7 @@ faults:
 
 - `name` is optional and only needed on a fault something anchors to.
 - `from` is a fault name (its end), `{ start: name }`, or a list of these (a join: the latest of them). Without `from`, `after` counts from traffic start, so unconnected faults stay concurrent by their windows.
-- Anchors are **planned** times. Every fault's start and end resolve when the plan is built, so base and head get identical schedules, `KAZU_DURATION` stays computable, and replay needs nothing new. The proxy and controller only ever see resolved times.
+- Anchors are **planned** times. Every wall-clock fault's start and end resolve when the plan is built, so base and head get identical schedules and replay needs nothing new; the proxy only ever sees resolved times. An anchor on a request-count fault resolves at run time, through the controller (amended by ADR-0006).
 - Kazu rejects, as whole-config rules: an anchor that names no fault in the scenario, cycles, an anchor whose end is used but which has no `for` (it never ends), and `from` with `after_requests` (the schema rejects that one).
 
 **Not done, ever: triggers on system events** ("once payments is healthy again"). The schedule would then depend on the system under test, so base and head could get different fault timelines, and an event that never happens turns into a fault that never fires. Antithesis doesn't let users script faults on system state either; recovery belongs in checks (`recovers:`).
@@ -33,4 +33,4 @@ Considered and lost:
 
 ## Consequences
 
-The schema carries `name` and `from` now (ADR-0002, decision 12: kept keys have their intended shape). Resolving anchors into times is plan work (driver 4/4's `KAZU_DURATION` computation, generalised). Folded into DESIGN.md §4.4 and §4.5 on acceptance.
+The schema carries `name` and `from` now (ADR-0002, decision 12: kept keys have their intended shape). Resolving anchors into times is plan work (driver 4/4), plus the controller for anchors on request-count faults. Folded into DESIGN.md §4.4 and §4.5 on acceptance.
