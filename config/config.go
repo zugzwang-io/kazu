@@ -9,12 +9,12 @@ import (
 // slices in file order, so anything derived from a config is deterministic
 // (Service.Environment and ServiceEnv.Vars stay maps; sort their keys).
 //
-// The loader fills every DESIGN.md default (HTTPRequest.Method) so a zero or
-// empty value after loading is one the user wrote, never one they left out.
+// The loader fills every documented default (HTTPRequest.Method) so a zero
+// or empty value after loading is one the user wrote, never one they left out.
 //
-// Config mirrors kazu.schema.json, which publishes each kept key's final
-// shape (ADR-0002), so it can hold more than the running build does; the
-// loader rejects that rest as not supported yet.
+// Config mirrors kazu.schema.json, which publishes each key's final shape,
+// so it can hold more than the running build does; the loader rejects that
+// rest as not supported yet.
 type Config struct {
 	System      System
 	Traffic     Service
@@ -144,7 +144,7 @@ const (
 	Network Layer = iota
 	// Request faults need a proxy that parses HTTP or gRPC, on one edge.
 	Request
-	// Process faults (process and resource faults in DESIGN.md) act on a
+	// Process faults (process and resource faults) act on a
 	// service's container.
 	Process
 )
@@ -184,7 +184,7 @@ type Fault struct {
 	RestartAfter time.Duration
 
 	// After counts from traffic start, or from the latest of From's anchors
-	// when From is set (ADR-0004); AfterRequests counts requests through the
+	// when From is set; AfterRequests counts requests through the
 	// proxy. At most one is set; neither means at traffic start or anchor.
 	After         time.Duration
 	AfterRequests int
@@ -309,7 +309,7 @@ type Metric struct {
 
 // Suite is a named set of scenarios. All means every scenario. Otherwise
 // Scenarios lists names as written, where "auto" stands for every auto
-// scenario (DESIGN.md §4.6; not supported yet).
+// scenario (not supported yet).
 type Suite struct {
 	Name      string
 	All       bool
