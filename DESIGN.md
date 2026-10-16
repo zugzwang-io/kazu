@@ -21,7 +21,7 @@ On every PR or release candidate, Kazu answers one question: *did this change ma
 | npm scope | `@zugzwang-io` is free if a scope is ever wanted | — |
 | Docs | `zugzwang-io.github.io/kazu` (free); a custom domain later, if ever | — |
 | Config file | `kazu.yaml` | Decided |
-| Env vars | `KAZU_SEED`, `KAZU_DURATION` (set on the traffic container) | |
+| Env vars | `KAZU_SEED` (set on the traffic container) | |
 
 Package names differing from the command is normal (`awscli` → `aws`, `azure-cli` → `az`, `@angular/cli` → `ng`); people remember the brand and the command.
 
@@ -73,7 +73,7 @@ Four components, each with one job, one entry point and one exit signal. **Every
 | Component | Lives in | Owns | Entry | Exit |
 |---|---|---|---|---|
 | **System** | `docker-compose.yml` (or rendered manifests) | Services, mocks, schema, seed data. All setup, as one-shot jobs. Nothing Kazu-specific, and no load | Kazu starts it, fresh for every trial | **Ready:** every healthcheck or readiness probe passes and every one-shot job has exited 0. After the trial Kazu deletes it; there is no cleanup step |
-| **Traffic** | A compose-style service definition (`image`, `command`, `volumes`, `environment`) in `kazu.yaml`; a scenario can override it | What requests to send, how fast, for how long. It generates load and never judges | Kazu starts it once the system is ready, on the system's network, with `KAZU_SEED`, `KAZU_DURATION` and the scenario's env vars | **The process exits.** Exit 0 means the load ran (a default check). It must run for `KAZU_DURATION`, the scenario's `duration:` (120 s by default); if it stops early, the scenario is *not exercised* |
+| **Traffic** | A compose-style service definition (`image`, `command`, `volumes`, `environment`) in `kazu.yaml`; a scenario can override it | What requests to send, how fast, for how long. It generates load and never judges | Kazu starts it once the system is ready, on the system's network, with `KAZU_SEED`, `KAZU_DURATION` and the scenario's env vars | **The process exits.** Exit 0 means the load ran (a default check). It decides how long it runs (the k6 template: `DURATION`, 120 s by default); Kazu stops a trial still running after 30 min. If it stops before every fault fires and recovery is seen, the scenario is *not exercised* |
 | **Checks** | The `checks:` list in `kazu.yaml`: one-line checks, plus code checks in a compose-style service using a Kazu SDK image | Judging, and nothing else | Kazu starts it per trial, outside the system, and talks to it over stdin/stdout; it calls each check at its point in the lifecycle | **Pass or fail, with a message**, per check |
 | **`kazu.yaml`** | The repo | Declarations only: system, traffic, edges, connections, scenarios, checks, suites, gate settings | — | — |
 
@@ -147,7 +147,7 @@ export const options = {
   scenarios: { orders: {
     executor: "constant-arrival-rate",       // keeps sending even when checkout slows
     rate: 10, timeUnit: "1s", preAllocatedVUs: 50,
-    duration: __ENV.KAZU_DURATION,           // set by Kazu per scenario
+    duration: __ENV.DURATION || "120s",     // a scenario changes it through env
   }},
 };
  
@@ -240,7 +240,7 @@ suites:
 - run: kazu run --suite pr --base TAG=${{ github.event.pull_request.base.sha }} --head TAG=${{ github.sha }} --junit reports/kazu.xml --markdown $GITHUB_STEP_SUMMARY
 ```
 
-Her compose file never mentions Kazu, and her load script only reads two variables Kazu sets. `KAZU_DURATION` is each scenario's `duration:`, 120 s unless it sets one: `db-blip`'s outage ends at 35 s, leaving 85 s to watch recovery.
+Her compose file never mentions Kazu, and her load script reads one variable Kazu sets (`KAZU_SEED`) and one knob of its own, `DURATION`: 120 s unless a scenario's `env` changes it. `db-blip`'s outage ends at 35 s, leaving 85 s to watch recovery.
 
 ### 4.3 Traffic
 
@@ -277,7 +277,7 @@ export const options = {
   scenarios: { traffic: {
     executor: "constant-arrival-rate",              // keeps sending when the system slows
     rate: RATE, timeUnit: "1s", preAllocatedVUs: RATE * 5,
-    duration: __ENV.KAZU_DURATION || "60s",         // set by Kazu per scenario
+    duration: __ENV.DURATION || "120s",              // a scenario changes it through env
   }},
   // No thresholds: k6 exits non-zero when a threshold fails, and traffic never judges.
 };
@@ -290,9 +290,10 @@ export const options = {
 | Variable | Meaning |
 |---|---|
 | `KAZU_SEED` | The run's seed. Derive keys and IDs from it so base and head send the same sequence |
-| `KAZU_DURATION` | How long to send, as a k6 duration (`120s`): the scenario's `duration:`, 120 s by default ([ADR-0006](docs/adr/0006-fixed-traffic-duration.md)). A fault that hasn't fired by then, or ended too late to watch recovery, makes the scenario *not exercised*; a longer `duration:` fixes it |
 
 Plus whatever the scenario's `env:` sets for `traffic`.
+
+**How long traffic runs is the script's business** ([ADR-0006](docs/adr/0006-fixed-traffic-duration.md)): the template reads `DURATION` (120 s by default) and a scenario changes it through `env`. Kazu stops a trial whose traffic is still running after 30 minutes. A fault that hasn't fired by the time traffic exits, or ended too late to watch recovery, makes the scenario *not exercised*; a longer `DURATION` fixes it.
 
 **Different traffic per scenario.** Base and head always get the same traffic for a given scenario; scenarios can differ from each other in two ways:
 - **Knobs, through `env`.** The scenario sets variables the script reads: `env: { traffic: { FLOW: browse, RATE: "50" } }`. The template's named flows make switching flow one variable.
@@ -357,7 +358,7 @@ scenarios:
       - { edge: checkout -> payments, fault: down, after: 20s, for: 20s }
   soak:
     traffic: { command: [run, /load/soak.js] }  # merged over the default traffic definition
-    duration: 180s                    # how long traffic runs (KAZU_DURATION); 120s by default
+    env: { traffic: { DURATION: 180s } }        # the script decides how long it runs
     faults:
       - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
   rare-errors:
@@ -443,7 +444,7 @@ A scenario's `faults:` is a list. Each fault is a map:
 
 - `edge: a -> b` means one declared edge. `service: b` means **every declared inbound edge** (network faults) or the process (process and resource faults). Callers whose edges aren't declared are untouched; `kazu doctor` lists them.
 - `after` counts from traffic start; `after_requests` counts requests through the proxy.
-- **Relative triggers** ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)). `from:` makes `after` count from another fault in the same scenario: its name for its end, `{ start: name }` for its start, or a list for the latest of several (a join). Without `from`, faults are independent and overlap by their windows. Anchors are *planned* times: every fault's start and end resolve when the plan is built, so base and head get the same schedule and `KAZU_DURATION` stays computable. Using a fault's end needs that fault to have a `for` (a crash has none); loops are rejected. There are no triggers on system events ("once payments is healthy"): the schedule would then depend on the system, so base and head could get different timelines.
+- **Relative triggers** ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)). `from:` makes `after` count from another fault in the same scenario: its name for its end, `{ start: name }` for its start, or a list for the latest of several (a join). Without `from`, faults are independent and overlap by their windows. Anchors are *planned* times: every wall-clock fault's start and end resolve when the plan is built, so base and head get the same schedule; an anchor on a request-count fault resolves at run time, through the controller (ADR-0006). Using a fault's end needs that fault to have a `for` (a crash has none); loops are rejected. There are no triggers on system events ("once payments is healthy"): the schedule would then depend on the system, so base and head could get different timelines.
 - `down` must cut live connections, or pooled connections ride through the outage and the scenario tests nothing.
 - `crash` kills the container in place and lets it restart in the same container (compose) or the same pod (Kubernetes). Deleting a pod would change IPs and filesystems and make base and head behave differently.
 - Request-count triggers land at the same point in every run; wall-clock triggers drift more.
@@ -735,7 +736,7 @@ Deliberate deviations:
 | Assertions over proxy-measured latency and the system's own OpenTelemetry metrics | Reuses telemetry teams already emit; catches failures that leave the data correct (retry amplification, pool exhaustion, latency regressions). Widens the previous row |
 | Regression defaults (user-facing error rate, p99, recovery, head vs base) alongside Antithesis-style defaults | Antithesis has no base vs head; these defaults make a minimal config give a meaningful regression verdict |
 | Runs on the customer's CI runners (hosted lanes optional), instead of only in a vendor cloud | Free tier runs on the customer's compute |
-| A supported load tool (k6) with a template, plus `KAZU_DURATION` | Antithesis leaves workloads entirely to the customer; writing load is the biggest effort after packaging, so we cut it to editing a list |
+| A supported load tool (k6) with a template | Antithesis leaves workloads entirely to the customer; writing load is the biggest effort after packaging, so we cut it to editing a list |
 | Traffic declared in `kazu.yaml` as an image, instead of a client container inside the compose file | Keeps the system file "just the system", with no Kazu-specific content. An Antithesis client image can still be used as the traffic image |
 | A fixed lifecycle with two check timings (`after`, `eventually`), instead of the test-command layout (`first_`, `parallel_driver_`, `anytime_`, `finally_`, ...) | Our scenarios are fixed rather than explored, so driver kinds and in-flight checks have no current use; setup lives in the system as one-shot jobs |
 
@@ -788,7 +789,7 @@ Traces come later: the same receiver can accept spans, enabling checks like "eac
 
 The target system for every step is `examples/shop` in the public repo (spec: `examples/shop/SPEC.md`). Each step lands the shop features and ground-truth rows it needs.
 
-1. **Walking skeleton:** network proxy (`latency`, `down` that cuts live connections) with traffic counters, compose driver with per-caller `extra_hosts` aliases, declared edges, landed check, the fixed lifecycle with traffic and checks images, `KAZU_DURATION`, the k6 template, `--base`/`--head` variables, `@after` via the Python SDK image, terminal verdict and a minimal `--json` result, config validation against the JSON schema. Target: shop's checkout → payments → postgres, including the IP trap. **The e2e gate starts here** (below), with rows V0, S1–S3 and S14.
+1. **Walking skeleton:** network proxy (`latency`, `down` that cuts live connections) with traffic counters, compose driver with per-caller `extra_hosts` aliases, declared edges, landed check, the fixed lifecycle with traffic and checks images, the k6 template, `--base`/`--head` variables, `@after` via the Python SDK image, terminal verdict and a minimal `--json` result, config validation against the JSON schema. Target: shop's checkout → payments → postgres, including the IP trap. **The e2e gate starts here** (below), with rows V0, S1–S3 and S14.
 2. **Trustworthy:** seeds, HTTP/gRPC proxy with request-count triggers and per-edge latency/error metrics, default setup and correctness checks (ready, crashes, exits, traffic exit code) from container events, `@eventually`, run records, `kazu replay`.
 3. **Gate + open-source launch:** trial pairs, statistical verdict with per-run noise estimates, `no_regression`, regression defaults and underpowered results, static shards + `merge`, GitHub Action, JUnit/Markdown/JSON outputs, PR comment; the e2e gate switches to the GitHub Action, exactly as customers use it.
 4. **Easy and everywhere:** K3s driver (rendered manifests, `hostAliases`, crash in place; moved to v1.1 by ADR-0003), OTLP receiver with PromQL `metric:` checks and the no-data check, opt-in language checks, `init`, `doctor`, process faults (built earlier, in PLAN.md's Phase 4), one-line checks (the `sql` one from step 1), TypeScript + Go SDK images, CI templates beyond GitHub, OTLP/S3/webhook sinks.
@@ -874,7 +875,7 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | Two check timings, `@after` and `@eventually`; no `@during`, no executable-check tier | YAGNI: every modelled failure is visible after traffic exits; SDK images and one-line checks cover every language |
 | k6 is the one supported traffic tool; the template is a k6 script, not a Kazu requests format | Constant arrival rate built in, scriptable multi-step flows, one official image, the largest user base. A template avoids designing and maintaining a second format. Any image still works |
 | Kazu never embeds k6 | k6 is AGPL-3.0; running its image as a separate container keeps Kazu Apache 2.0 |
-| Kazu computes `KAZU_DURATION` per scenario | Nobody hand-calculates fault plus recovery time; a too-short load was the most likely setup mistake. *Superseded by ADR-0006: a fixed `duration:` per scenario, 120 s by default; too short is reported as not exercised* |
+| Kazu computes `KAZU_DURATION` per scenario | Nobody hand-calculates fault plus recovery time; a too-short load was the most likely setup mistake. *Superseded by ADR-0006: the traffic decides how long it runs (the template defaults to 120 s), Kazu caps a trial at 30 min, and too short is reported as not exercised* |
 | No traffic recording and no observability-driven traffic | YAGNI: the template covers simple cases and existing k6 scripts cover the rest; observability data has the shape of traffic but not the payloads, and would pull production data into CI |
 | Base and head chosen by variables the system file interpolates; images pulled, never built | Works with any tagging scheme and keeps builds out of Kazu; CI already publishes images per commit. Git refs (Kazu builds both) and per-service image maps were the alternatives |
 | Head's traffic and checks run against both base and head | A PR can't weaken a check to hide its own regression, and load changes can't look like regressions. A check that errors on base is reported as incompatible, not as a verdict |
