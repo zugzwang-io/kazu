@@ -21,7 +21,7 @@ The driver asks Docker for a free subnet, puts the trial network on it and gives
 
 ## Consequences
 
-**Proved by the Phase 3 spike** (branch `spike-network`, run 38973416568), every check passing 3× on a GitHub-hosted runner and 3× on Colima: the shop healthy on a Kazu-chosen subnet with `internal: true` (`up --wait` works; healthchecks run inside containers); checkout's calls to payments through a static-IP proxy via `extra_hosts`, with the alias per-caller (another container calling `payments` bypasses it); SQL and HTTP from the host through the helper; the network sealed (internet and external DNS fail at once); clean teardown and subnet reuse; the subnet picker skipping a taken range. On the runner, with images cached, `up --wait` takes ~6 s and a host↔helper round trip under 1 ms.
+**Proved by the Phase 3 spike** (branch `spike-network`, kept unmerged as the record; run 38973416568), every check passing 3× on a GitHub-hosted runner and 3× on Colima: the shop healthy on a Kazu-chosen subnet with `internal: true` (`up --wait` works; healthchecks run inside containers); checkout's calls to payments through a static-IP proxy via `extra_hosts`, with the alias per-caller (another container calling `payments` bypasses it); SQL and HTTP from the host through the helper; the network sealed (internet and external DNS fail at once); clean teardown and subnet reuse; the subnet picker skipping a taken range. On the runner, with images cached, `up --wait` takes ~6 s and a host↔helper round trip under 1 ms.
 
 What the driver must do, learned in the spike:
 - Override the project's default network (`networks.default` with `internal: true` and `ipam` `subnet` + `ip_range`); no service needs editing.
