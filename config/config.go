@@ -1,9 +1,17 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Config is a parsed and validated kazu.yaml. Maps from the file become
-// slices in file order, so anything derived from a config is deterministic.
+// slices in file order, so anything derived from a config is deterministic
+// (Service.Environment and ServiceEnv.Vars stay maps; sort their keys).
+//
+// The loader fills every DESIGN.md default (Defaults, Gate, HTTPRequest.Method)
+// so a zero or empty value after loading is one the user wrote, never one
+// they left out.
 type Config struct {
 	System        System
 	Traffic       Service
@@ -98,8 +106,9 @@ type Scenario struct {
 	Faults []Fault
 	// Env holds env vars per service, passed through untouched.
 	Env []ServiceEnv
-	// Traffic, when set, is merged over Config.Traffic: a non-empty Image,
-	// a non-nil Command or non-nil Volumes replace, Environment is merged.
+	// Traffic holds what the file wrote; the driver merges it over
+	// Config.Traffic (a non-empty Image, a non-nil Command or non-nil
+	// Volumes replace, Environment is merged).
 	Traffic *Service
 	// Duration overrides the computed KAZU_DURATION; zero means computed.
 	Duration time.Duration
@@ -145,7 +154,8 @@ const (
 	Process
 )
 
-// Layer returns where the fault kind is applied.
+// Layer returns where the fault kind is applied. The schema admits only the
+// kinds above, so any other value is a programming error.
 func (k FaultKind) Layer() Layer {
 	switch k {
 	case Latency, Down, Blackhole, Reset, Bandwidth:
@@ -155,13 +165,14 @@ func (k FaultKind) Layer() Layer {
 	case Crash, Pause, CPU, Memory, DiskFull:
 		return Process
 	}
-	return Network
+	panic(fmt.Sprintf("config: unknown fault kind %q", string(k)))
 }
 
 // Fault is one entry of a scenario's faults list. Exactly one of Edge and
 // Service is set. Fields that don't apply to Kind are zero.
 type Fault struct {
-	// Edge is a declared edge's canonical name, "caller -> callee".
+	// Edge is a declared edge's canonical name, "caller -> callee"; the
+	// loader normalises the spacing the schema allows around the arrow.
 	Edge    string
 	Service string
 	Kind    FaultKind
@@ -171,7 +182,9 @@ type Fault struct {
 	Code          string        // errors: an HTTP status ("503") or a gRPC code name ("UNAVAILABLE")
 	Limit         BitRate       // bandwidth
 	Load          Percent       // cpu, memory
-	RestartAfter  time.Duration // crash
+	// RestartAfter is how long a crashed container stays down before Kazu
+	// restarts it; zero means right away.
+	RestartAfter time.Duration
 
 	// After counts from traffic start; AfterRequests counts requests through
 	// the proxy. At most one is set; neither means from traffic start.
@@ -192,17 +205,42 @@ func (f Fault) Target() string {
 // Percent is a percentage as written: "20%" is 20.
 type Percent float64
 
+// PercentagePoints is a difference between two percentages: "0.5pp" is 0.5.
+type PercentagePoints float64
+
 // BitRate is bits per second.
 type BitRate int64
 
-// Defaults tunes the built-in checks (DESIGN.md §4.6).
+// Language selects the opt-in log checks for one runtime.
+type Language string
+
+const (
+	Go   Language = "go"
+	Java Language = "java"
+	Rust Language = "rust"
+)
+
+// DefaultCheck names a built-in check that defaults.off can switch off.
+type DefaultCheck string
+
+const (
+	CrashesDefault     DefaultCheck = "crashes"
+	ExitsDefault       DefaultCheck = "exits"
+	TrafficExitDefault DefaultCheck = "traffic_exit"
+	ErrorRateDefault   DefaultCheck = "error_rate"
+	LatencyDefault     DefaultCheck = "latency"
+	RecoversDefault    DefaultCheck = "recovers"
+)
+
+// Defaults tunes the built-in checks (DESIGN.md §4.6). The loader fills the
+// three tolerances with DESIGN's defaults when the file leaves them out, so
+// a zero here is a tolerance of zero.
 type Defaults struct {
-	LatencyWithin Percent
-	// ErrorRateWithin is in percentage points: "0.5pp" is 0.5.
-	ErrorRateWithin float64
+	LatencyWithin   Percent
+	ErrorRateWithin PercentagePoints
 	RecoversWithin  time.Duration
-	Languages       []string
-	Off             []string
+	Languages       []Language
+	Off             []DefaultCheck
 }
 
 // CheckKind is the kind of a user check.
@@ -243,7 +281,8 @@ type SQL struct {
 	ExpectValue string
 }
 
-// HTTPRequest sends one request to a connection after traffic exits.
+// HTTPRequest sends one request to a connection after traffic exits. Method
+// is GET when the file doesn't say.
 type HTTPRequest struct {
 	On, Method, Path string
 	// ExpectStatus is zero when not checked; ExpectBody is a substring of
@@ -314,10 +353,12 @@ const (
 	FailOnViolation FailOn = "violation"
 )
 
-// Gate holds the verdict settings.
+// Gate holds the verdict settings. The loader fills every severity and
+// FailOn with DESIGN's defaults, so none is ever empty after loading.
 type Gate struct {
 	FailOn FailOn
-	// Trials is a fixed number of trial pairs; zero means adaptive.
+	// Trials is a fixed number of trial pairs; zero means adaptive (the
+	// schema requires a written number to be at least 1).
 	Trials       int
 	Flaky        Severity
 	NotExercised Severity

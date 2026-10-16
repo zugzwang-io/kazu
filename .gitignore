@@ -1,0 +1,4 @@
+.idea/
+
+# Personal Claude Code overrides stay out of the repo
+.claude/settings.local.json

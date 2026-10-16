@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"math/big"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,61 +18,189 @@ import (
 // schemaProblems turns the validator's error tree into one problem per
 // failed rule, worded for someone editing YAML rather than JSON.
 func schemaProblems(ps *problems, ve *jsonschema.ValidationError) {
-	if _, ok := ve.ErrorKind.(*kind.PropertyNames); !ok && len(ve.Causes) > 0 {
-		for _, c := range ve.Causes {
-			schemaProblems(ps, c)
-		}
-		return
-	}
 	path := ve.InstanceLocation
 	switch k := ve.ErrorKind.(type) {
+	case *kind.OneOf:
+		names := branchNames(ve.SchemaURL, "oneOf")
+		if present := presentKeys(ps.root, path, names); len(present) > 1 {
+			ps.add(path, fmt.Sprintf("has %s; keep one", andList(present)))
+		} else {
+			ps.add(path, "needs one of "+orList(names))
+		}
+	case *kind.AnyOf:
+		ps.add(path, "needs at least one of "+orList(branchNames(ve.SchemaURL, "anyOf")))
+	case *kind.Not:
+		not, _ := schemaAt(ve.SchemaURL)["not"].(map[string]any)
+		ps.add(path, "can't have both "+andList(anyStrings(not["required"])))
+	case *kind.PropertyNames:
+		propertyNameProblem(ps, ve, k)
 	case *kind.AdditionalProperties:
 		allowed := schemaProperties(ve.SchemaURL)
 		for _, p := range k.Properties {
-			msg := fmt.Sprintf("unknown key %q", p) + suggest(p, allowed)
-			ps.addKey(append(slices.Clone(path), p), msg)
+			ps.addKey(append(slices.Clone(path), p), fmt.Sprintf("unknown key %q", p)+suggest(p, allowed))
 		}
+	default:
+		if len(ve.Causes) > 0 {
+			for _, c := range ve.Causes {
+				schemaProblems(ps, c)
+			}
+			return
+		}
+		ps.add(path, leafMessage(ps.root, ve))
+	}
+}
+
+// leafMessage words one rule failure with no causes of its own.
+func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
+	path := ve.InstanceLocation
+	switch k := ve.ErrorKind.(type) {
 	case *kind.Required:
-		for _, m := range k.Missing {
-			ps.add(path, fmt.Sprintf("missing key %q", m))
-		}
+		return fmt.Sprintf("missing key %s", quoteList(k.Missing))
+	case *kind.DependentRequired:
+		return fmt.Sprintf("%q needs %s", k.Prop, quoteList(k.Missing))
+	case *kind.FalseSchema:
+		return falseSchemaMessage(root, path, ve.SchemaURL)
 	case *kind.Type:
 		want := yamlTypes(k.Want)
 		if p, ok := schemaAt(ve.SchemaURL)["pattern"].(string); ok {
 			want = describePattern(p)
 		}
-		ps.add(path, fmt.Sprintf("expected %s, got %s", want, yamlType(k.Got)))
+		return fmt.Sprintf("expected %s, got %s", want, yamlType(k.Got))
 	case *kind.Enum:
 		want := make([]string, len(k.Want))
 		for i, w := range k.Want {
 			want[i] = fmt.Sprint(w)
 		}
 		got := fmt.Sprint(k.Got)
-		ps.add(path, fmt.Sprintf("%q is not one of %s", got, quoteList(want))+suggest(got, want))
+		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + suggest(got, want)
 	case *kind.Const:
-		ps.add(path, fmt.Sprintf("%q is not allowed here; the only text value is %q", fmt.Sprint(k.Got), fmt.Sprint(k.Want)))
+		return fmt.Sprintf("%q is not allowed here; the only text value is %q", fmt.Sprint(k.Got), fmt.Sprint(k.Want))
 	case *kind.Pattern:
-		ps.add(path, fmt.Sprintf("%q is not %s", k.Got, describePattern(k.Want)))
-	case *kind.PropertyNames:
-		// The validator (v6.0.3) can report these at a sibling key's
-		// location, so find the key in the file instead.
-		msg := fmt.Sprintf("%q is not a valid key here", k.Property)
-		if p := findPattern(ve); p != nil {
-			msg = fmt.Sprintf("%q is not %s", k.Property, describePattern(p.Want))
-		}
-		ps.addKey(findKey(ps.root, k.Property), msg)
-		return
+		return fmt.Sprintf("%q is not %s", k.Got, describePattern(k.Want))
+	case *kind.Minimum:
+		return "must be at least " + ratString(k.Want)
+	case *kind.Maximum:
+		return "must be at most " + ratString(k.Want)
 	case *kind.UniqueItems:
-		ps.add(path, "lists the same value twice")
-	case *kind.MinItems:
-		ps.add(path, "must not be empty")
-	case *kind.MinLength:
-		ps.add(path, "must not be empty")
-	case *kind.MinProperties:
-		ps.add(path, "must not be empty")
+		return "lists the same value twice"
+	case *kind.MinItems, *kind.MinLength, *kind.MinProperties:
+		return "must not be empty"
 	default:
-		ps.add(path, ve.ErrorKind.LocalizedString(printer))
+		return ve.ErrorKind.LocalizedString(printer)
 	}
+}
+
+// falseSchemaMessage explains a key the schema forbids in this particular
+// object: a field of another fault kind, or a bound that excludes another.
+func falseSchemaMessage(root *yaml.Node, path []string, schemaURL string) string {
+	key := path[len(path)-1]
+	if m := dependentSchema.FindStringSubmatch(schemaURL); m != nil {
+		return fmt.Sprintf("%q can't go with %q", key, m[1])
+	}
+	if parent := lookup(root, path[:len(path)-1], false); parent != nil {
+		if f := child(parent, "fault"); f != nil {
+			return fmt.Sprintf("%q is not a field of a %s fault", key, f.Value)
+		}
+	}
+	return fmt.Sprintf("%q is not allowed here", key)
+}
+
+var dependentSchema = regexp.MustCompile(`/dependentSchemas/([^/]+)/`)
+
+// addKey points propertyNames problems at the right key. jsonschema v6.0.3
+// stores these errors' InstanceLocation without copying the slice it was
+// building (validator.go, kind.PropertyNames), so by the time we read it a
+// later-validated sibling map has overwritten its tail; only its length and
+// the SchemaURL are reliable. We find every map at that depth whose schema
+// is that URL and which holds the key, and report each.
+func propertyNameProblem(ps *problems, ve *jsonschema.ValidationError, k *kind.PropertyNames) {
+	msg := fmt.Sprintf("%q is not a valid key here", k.Property)
+	if p := findPattern(ve); p != nil {
+		msg = fmt.Sprintf("%q is not %s", k.Property, describePattern(p.Want))
+	}
+	want := strings.TrimSuffix(fragment(ve.SchemaURL), "/propertyNames")
+	var found bool
+	for _, path := range mapsWithKey(ps.root, k.Property, len(ve.InstanceLocation)) {
+		if schemaLocation(path) == want {
+			ps.addKey(append(path, k.Property), msg)
+			found = true
+		}
+	}
+	if !found {
+		ps.add(nil, msg)
+	}
+}
+
+// mapsWithKey returns the paths of every map at the given depth that has
+// the key, in file order.
+func mapsWithKey(n *yaml.Node, key string, depth int) [][]string {
+	if depth == 0 {
+		if n.Kind == yaml.MappingNode && child(n, key) != nil {
+			return [][]string{{}}
+		}
+		return nil
+	}
+	var out [][]string
+	switch n.Kind {
+	case yaml.MappingNode:
+		for j := 0; j+1 < len(n.Content); j += 2 {
+			for _, sub := range mapsWithKey(n.Content[j+1], key, depth-1) {
+				out = append(out, append([]string{n.Content[j].Value}, sub...))
+			}
+		}
+	case yaml.SequenceNode:
+		for i, c := range n.Content {
+			for _, sub := range mapsWithKey(c, key, depth-1) {
+				out = append(out, append([]string{strconv.Itoa(i)}, sub...))
+			}
+		}
+	default:
+	}
+	return out
+}
+
+// schemaLocation walks kazu.schema.json along an instance path and returns
+// the fragment of the schema that applies there, after following $ref the
+// way the validator reports it.
+func schemaLocation(path []string) string {
+	loc := "#"
+	node, _ := schemaDoc.(map[string]any)
+	node, loc = deref(node, loc)
+	for _, tok := range path {
+		if props, ok := node["properties"].(map[string]any); ok {
+			if sub, ok := props[tok].(map[string]any); ok {
+				node, loc = deref(sub, loc+"/properties/"+tok)
+				continue
+			}
+		}
+		if sub, ok := node["additionalProperties"].(map[string]any); ok {
+			node, loc = deref(sub, loc+"/additionalProperties")
+			continue
+		}
+		if sub, ok := node["items"].(map[string]any); ok {
+			node, loc = deref(sub, loc+"/items")
+			continue
+		}
+		return ""
+	}
+	return loc
+}
+
+func deref(node map[string]any, loc string) (map[string]any, string) {
+	for {
+		ref, ok := node["$ref"].(string)
+		if !ok {
+			return node, loc
+		}
+		node, loc = schemaAt(ref), fragment(ref)
+	}
+}
+
+func fragment(url string) string {
+	if i := strings.Index(url, "#"); i >= 0 {
+		return url[i:]
+	}
+	return "#"
 }
 
 var printer = message.NewPrinter(language.English)
@@ -79,6 +209,7 @@ var printer = message.NewPrinter(language.English)
 var patternNames = map[string]string{
 	"^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$":                                "a duration such as 300ms, 20s or 1m30s",
 	"^[0-9]+(\\.[0-9]+)?%$":                                            "a percentage such as 20%",
+	"^(100(\\.0+)?|[0-9]{1,2}(\\.[0-9]+)?)%$":                          "a percentage from 0% to 100%",
 	"^[0-9]+(\\.[0-9]+)?pp$":                                           "percentage points such as 0.5pp",
 	"^[0-9]+(\\.[0-9]+)?(bps|kbps|mbps|gbps)$":                         "a bandwidth such as 64kbps",
 	"^[A-Za-z0-9][A-Za-z0-9_.-]*$":                                     "a name (letters, digits, '.', '_' and '-')",
@@ -123,6 +254,60 @@ func yamlTypes(ts []string) string {
 	return strings.Join(words, " or ")
 }
 
+func ratString(r *big.Rat) string {
+	if r.IsInt() {
+		return r.Num().String()
+	}
+	f, _ := r.Float64()
+	return strconv.FormatFloat(f, 'g', -1, 64)
+}
+
+// branchNames returns the key each branch of a oneOf or anyOf requires.
+func branchNames(url, keyword string) []string {
+	branches, _ := schemaAt(url)[keyword].([]any)
+	var names []string
+	for _, b := range branches {
+		m, _ := b.(map[string]any)
+		names = append(names, anyStrings(m["required"])...)
+	}
+	return names
+}
+
+// presentKeys returns which of names the map at path has, in file order.
+func presentKeys(root *yaml.Node, path []string, names []string) []string {
+	n := lookup(root, path, false)
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	var present []string
+	for j := 0; j+1 < len(n.Content); j += 2 {
+		if slices.Contains(names, n.Content[j].Value) {
+			present = append(present, n.Content[j].Value)
+		}
+	}
+	return present
+}
+
+func anyStrings(v any) []string {
+	items, _ := v.([]any)
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, fmt.Sprint(it))
+	}
+	return out
+}
+
+func andList(items []string) string { return joinList(items, "and") }
+
+func orList(items []string) string { return joinList(items, "or") }
+
+func joinList(items []string, conj string) string {
+	if len(items) <= 1 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " " + conj + " " + items[len(items)-1]
+}
+
 // schemaProperties returns the keys the schema at url allows, for
 // suggestions on unknown keys.
 func schemaProperties(url string) []string {
@@ -137,10 +322,9 @@ func schemaProperties(url string) []string {
 
 // schemaAt returns the raw schema object at url, a location in kazu.schema.json.
 func schemaAt(url string) map[string]any {
-	_, frag, _ := strings.Cut(url, "#")
 	node := schemaDoc
-	for _, tok := range strings.Split(strings.TrimPrefix(frag, "/"), "/") {
-		if tok == "" {
+	for _, tok := range strings.Split(strings.TrimPrefix(fragment(url), "#/"), "/") {
+		if tok == "" || tok == "#" {
 			continue
 		}
 		tok = strings.ReplaceAll(strings.ReplaceAll(tok, "~1", "/"), "~0", "~")
@@ -152,30 +336,6 @@ func schemaAt(url string) map[string]any {
 	}
 	m, _ := node.(map[string]any)
 	return m
-}
-
-// findKey returns the path to the first map key named name, in file order.
-func findKey(n *yaml.Node, name string) []string {
-	switch n.Kind {
-	case yaml.MappingNode:
-		for j := 0; j+1 < len(n.Content); j += 2 {
-			k := n.Content[j].Value
-			if k == name {
-				return []string{k}
-			}
-			if sub := findKey(n.Content[j+1], name); sub != nil {
-				return append([]string{k}, sub...)
-			}
-		}
-	case yaml.SequenceNode:
-		for i, c := range n.Content {
-			if sub := findKey(c, name); sub != nil {
-				return append([]string{strconv.Itoa(i)}, sub...)
-			}
-		}
-	default:
-	}
-	return nil
 }
 
 // findPattern returns the first pattern error under ve.

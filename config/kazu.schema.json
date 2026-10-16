@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zugzwang-io.github.io/kazu/kazu.schema.json",
   "title": "kazu.yaml",
-  "description": "Kazu configuration: the system, traffic, edges, scenarios, checks, suites and gate settings (DESIGN.md §4.4). Structure only; rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
+  "description": "Kazu configuration: the system, traffic, edges, scenarios, checks, suites and gate settings (DESIGN.md §4.4). The schema covers everything decidable inside one object: types, unknown keys, enums, string formats, and which fields each fault or check kind takes. Rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
   "type": "object",
   "additionalProperties": false,
   "required": ["system", "traffic"],
   "properties": {
     "system": {
-      "description": "The system under test: a compose file, or a directory of rendered Kubernetes manifests.",
+      "description": "The system under test: a compose file, or a directory of rendered Kubernetes manifests (the Kubernetes driver arrives in v1.1; ADR-0003).",
       "type": ["string", "object"],
       "minLength": 1,
       "additionalProperties": false,
@@ -142,8 +142,14 @@
       "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$"
     },
     "percent": {
+      "description": "A percentage; tolerances may exceed 100%.",
       "type": "string",
       "pattern": "^[0-9]+(\\.[0-9]+)?%$"
+    },
+    "share": {
+      "description": "A percentage from 0% to 100%: how many requests a fault hits, how much of a resource it takes.",
+      "type": "string",
+      "pattern": "^(100(\\.0+)?|[0-9]{1,2}(\\.[0-9]+)?)%$"
     },
     "percentagePoints": {
       "type": "string",
@@ -199,6 +205,7 @@
       }
     },
     "fault": {
+      "description": "One fault (DESIGN.md §4.5): exactly one target (edge or service), a kind, that kind's fields, and a trigger (after or after_requests, not both).",
       "type": "object",
       "additionalProperties": false,
       "required": ["fault"],
@@ -210,25 +217,69 @@
         },
         "delay": { "$ref": "#/$defs/duration" },
         "jitter": { "$ref": "#/$defs/duration" },
-        "rate": { "$ref": "#/$defs/percent" },
-        "code": { "type": ["integer", "string"] },
+        "rate": { "$ref": "#/$defs/share" },
+        "code": {
+          "description": "An HTTP error status (503) or a gRPC status code or name (14, UNAVAILABLE); kazu checks the range against the edge's protocol.",
+          "type": ["integer", "string"],
+          "minLength": 1
+        },
         "limit": { "$ref": "#/$defs/bandwidth" },
-        "load": { "$ref": "#/$defs/percent" },
+        "load": { "$ref": "#/$defs/share" },
         "restart_after": { "$ref": "#/$defs/duration" },
         "after": { "$ref": "#/$defs/duration" },
         "after_requests": { "type": "integer", "minimum": 1 },
         "for": { "$ref": "#/$defs/duration" }
       },
+      "oneOf": [
+        { "required": ["edge"] },
+        { "required": ["service"] }
+      ],
+      "not": { "required": ["after", "after_requests"] },
       "allOf": [
-        { "if": { "properties": { "fault": { "const": "latency" } } }, "then": { "required": ["delay"] } },
-        { "if": { "properties": { "fault": { "enum": ["reset", "timeout"] } } }, "then": { "required": ["rate"] } },
-        { "if": { "properties": { "fault": { "const": "errors" } } }, "then": { "required": ["rate", "code"] } },
-        { "if": { "properties": { "fault": { "const": "bandwidth" } } }, "then": { "required": ["limit"] } },
-        { "if": { "properties": { "fault": { "enum": ["cpu", "memory"] } } }, "then": { "required": ["load"] } }
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "const": "latency" } } },
+          "then": { "required": ["delay"], "properties": { "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["down", "blackhole"] } } },
+          "then": { "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["reset", "timeout"] } } },
+          "then": { "required": ["rate"], "properties": { "delay": false, "jitter": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "const": "bandwidth" } } },
+          "then": { "required": ["limit"], "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "load": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "const": "errors" } } },
+          "then": { "required": ["rate", "code"], "properties": { "delay": false, "jitter": false, "limit": false, "load": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "const": "crash" } } },
+          "then": { "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["pause", "disk_full"] } } },
+          "then": { "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["cpu", "memory"] } } },
+          "then": { "required": ["load"], "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "restart_after": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["errors", "timeout"] } } },
+          "then": { "properties": { "service": false } }
+        },
+        {
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["crash", "pause", "cpu", "memory", "disk_full"] } } },
+          "then": { "properties": { "edge": false } }
+        }
       ]
     },
     "check": {
-      "description": "One user check: exactly one of image, sql, http, recovers, no_regression, slo or metric, plus an optional name.",
+      "description": "One user check: exactly one of image, sql, http, recovers, no_regression, slo or metric, plus an optional name. command, volumes and environment go with image.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -264,7 +315,7 @@
               "minProperties": 1,
               "properties": {
                 "status": { "type": "integer", "minimum": 100, "maximum": 599 },
-                "body": { "description": "A substring the response body must contain.", "type": "string" }
+                "body": { "description": "A substring the response body must contain.", "type": "string", "minLength": 1 }
               }
             }
           }
@@ -299,9 +350,13 @@
               "description": "A duration for latency measures (p99: 250ms), a percentage for error_rate (1%).",
               "type": "string"
             }
-          }
+          },
+          "if": { "required": ["measure"], "properties": { "measure": { "const": "error_rate" } } },
+          "then": { "properties": { "max": { "$ref": "#/$defs/share" } } },
+          "else": { "properties": { "max": { "$ref": "#/$defs/duration" } } }
         },
         "metric": {
+          "description": "A PromQL query with one bound: max and/or min (absolute), or within (relative to base).",
           "type": "object",
           "additionalProperties": false,
           "required": ["query"],
@@ -311,8 +366,30 @@
             "min": { "type": "number" },
             "within": { "description": "Relative to base.", "$ref": "#/$defs/percent" },
             "no_data": { "$ref": "#/$defs/severity" }
+          },
+          "anyOf": [
+            { "required": ["max"] },
+            { "required": ["min"] },
+            { "required": ["within"] }
+          ],
+          "dependentSchemas": {
+            "within": { "properties": { "max": false, "min": false } }
           }
         }
+      },
+      "oneOf": [
+        { "required": ["image"] },
+        { "required": ["sql"] },
+        { "required": ["http"] },
+        { "required": ["recovers"] },
+        { "required": ["no_regression"] },
+        { "required": ["slo"] },
+        { "required": ["metric"] }
+      ],
+      "dependentRequired": {
+        "command": ["image"],
+        "volumes": ["image"],
+        "environment": ["image"]
       }
     },
     "measure": { "enum": ["p50", "p90", "p95", "p99", "error_rate"] }

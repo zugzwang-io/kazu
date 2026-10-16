@@ -1,17 +1,17 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
 )
 
 // flattener resolves aliases and merge keys (<<) into a plain tree, keeping
-// each node's position, so every later step sees what YAML means.
+// each node's position, so every later step sees what YAML means. It records
+// problems as it goes; flatten returns nil when the tree can't be read.
 type flattener struct {
 	nodes int
-	dups  []Problem
+	ps    *problems
 }
 
 const (
@@ -19,15 +19,16 @@ const (
 	maxNodes = 1_000_000
 )
 
-func (f *flattener) flatten(n *yaml.Node, depth int) (*yaml.Node, error) {
+func (f *flattener) flatten(n *yaml.Node, depth int) *yaml.Node {
 	f.nodes++
 	if depth > maxDepth || f.nodes > maxNodes {
-		return nil, errors.New("the file nests or repeats aliases too deeply to read")
+		f.ps.put(Problem{Line: n.Line, Column: n.Column, Message: "the file nests or repeats aliases too deeply to read"})
+		return nil
 	}
 	switch n.Kind {
 	case yaml.DocumentNode:
 		if len(n.Content) == 0 {
-			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Line: n.Line, Column: n.Column}, nil
+			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Line: n.Line, Column: n.Column}
 		}
 		return f.flatten(n.Content[0], depth+1)
 	case yaml.AliasNode:
@@ -36,24 +37,26 @@ func (f *flattener) flatten(n *yaml.Node, depth int) (*yaml.Node, error) {
 		out := *n
 		out.Content = make([]*yaml.Node, len(n.Content))
 		for i, c := range n.Content {
-			fc, err := f.flatten(c, depth+1)
-			if err != nil {
-				return nil, err
+			fc := f.flatten(c, depth+1)
+			if fc == nil {
+				return nil
 			}
 			out.Content[i] = fc
 		}
-		return &out, nil
+		return &out
 	case yaml.MappingNode:
 		return f.mapping(n, depth)
 	case yaml.ScalarNode:
 		out := *n
-		return &out, nil
+		return &out
 	}
 	out := *n
-	return &out, nil
+	return &out
 }
 
-func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
+// mapping flattens a map. A duplicate key is recorded and the last value
+// kept, as the schema will see it; merge keys that aren't maps are fatal.
+func (f *flattener) mapping(n *yaml.Node, depth int) *yaml.Node {
 	explicit := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k := n.Content[i]
@@ -61,7 +64,7 @@ func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 			continue
 		}
 		if explicit[k.Value] {
-			f.dups = append(f.dups, Problem{Line: k.Line, Column: k.Column, Message: fmt.Sprintf("key %q appears twice in the same map", k.Value)})
+			f.ps.put(Problem{Line: k.Line, Column: k.Column, Message: fmt.Sprintf("key %q appears twice in the same map", k.Value)})
 		}
 		explicit[k.Value] = true
 	}
@@ -70,18 +73,14 @@ func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 	added := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
+		fv := f.flatten(v, depth+1)
+		if fv == nil {
+			return nil
+		}
 		if !isMerge(k) {
-			fv, err := f.flatten(v, depth+1)
-			if err != nil {
-				return nil, err
-			}
 			kc := *k
 			out.Content = append(out.Content, &kc, fv)
 			continue
-		}
-		fv, err := f.flatten(v, depth+1)
-		if err != nil {
-			return nil, err
 		}
 		var sources []*yaml.Node
 		switch fv.Kind {
@@ -90,11 +89,11 @@ func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 		case yaml.SequenceNode:
 			sources = fv.Content
 		default:
-			return nil, fmt.Errorf("line %d: a merge key (<<) takes a map or a list of maps", fv.Line)
+			return f.notAMap(fv)
 		}
 		for _, src := range sources {
 			if src.Kind != yaml.MappingNode {
-				return nil, fmt.Errorf("line %d: a merge key (<<) takes a map or a list of maps", src.Line)
+				return f.notAMap(src)
 			}
 			for j := 0; j+1 < len(src.Content); j += 2 {
 				key := src.Content[j].Value
@@ -106,7 +105,12 @@ func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 			}
 		}
 	}
-	return &out, nil
+	return &out
+}
+
+func (f *flattener) notAMap(n *yaml.Node) *yaml.Node {
+	f.ps.put(Problem{Line: n.Line, Column: n.Column, Message: "a merge key (<<) takes a map or a list of maps"})
+	return nil
 }
 
 func isMerge(k *yaml.Node) bool {
