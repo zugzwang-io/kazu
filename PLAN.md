@@ -41,6 +41,9 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #27 Platform plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch
 - [x] #28 model tiering for agent flows: reviewers on sonnet, mechanical sync on haiku, verify-foundations stays premium
 - [x] #29 CLAUDE.md: code never cites markdown docs (comments, docstrings, schema descriptions, fixtures)
+- [x] #30 CLAUDE.md: read uncovered lines before a PR; no coverage threshold
+- [x] #31 docs: ADR-0002 and ADR-0004 accepted, config decisions folded into DESIGN.md
+- [~] #32 plan: Phase 3 derisked after the 2026-10-16 foundations review (S14, networking spike, slice order, ADR-0003 accepted, ADR-0005 proposed)
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
@@ -71,7 +74,7 @@ Order (2026-10-16 foundations review): the networking spike first, then the thin
 
 Networking (derisk first):
 
-- [ ] spike → ADR-0005: Kazu reaches the trial network through one in-network helper container (decided 2026-10-16). Prove it on a GitHub-hosted Linux runner first (CI is what matters; macOS second): the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP, on a sealed (`internal`) network; the host drives the helper over one channel to read the proxy's counters and run a SQL query against `postgres`
+- [ ] spike → ADR-0005 (drafted in #32): Kazu reaches the trial network through one in-network helper container (decided 2026-10-16). Prove it on a GitHub-hosted Linux runner first (CI is what matters; macOS second): the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP, on a sealed (`internal`) network; the host drives the helper over one channel to read the proxy's counters and run a SQL query against `postgres`
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
@@ -105,9 +108,10 @@ Verdict and CLI:
 Shop and the e2e gate:
 
 - [ ] templates: `templates/k6/traffic.js` (DESIGN §4.3) and the shop's `load/traffic.js` edited from it
-- [ ] shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
-- [ ] shop: a test for a connection reset mid-request (→ `pending`); integration tests open one pool per service with production settings and `search_path`, not one shared pool
-- [ ] shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
+- [~] #33 shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
+- [~] #34 shop: a test for a connection reset mid-request (→ `pending`); it found net/http silently resending a reset request, which could mark a charged order `failed` (fixed)
+- [~] #35 shop: integration tests open one pool per service with production settings and `search_path`, not one shared pool
+- [~] #36 shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
 - [ ] shop: step-1 `kazu.yaml` with a liveness check (some order got paid, so zero-row checks can't pass on no traffic), `safety/` configs for S1–S3 and S14, `expectations.yaml` with V0, S1–S3 and S14
 - [ ] shop: `SHOP_TRAP_PAYMENTS_BY_IP`, with the plain Go test showing the alias is bypassed
 - [ ] e2e gate: workflow that builds the binary and SDK image and runs the shop as a customer would; a Go asserter (not Kazu) compares each row's JSON to `expectations.yaml` and requires nonzero user-facing edge counters on V0 and S2; rows V0, S1–S3 and S14 become required checks
