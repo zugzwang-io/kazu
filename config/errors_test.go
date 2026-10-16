@@ -222,14 +222,8 @@ func TestPropertyNamesLocationBug(t *testing.T) {
 	misplaced := 0
 	var walk func(*jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
-		if k, ok := e.ErrorKind.(*kind.PropertyNames); ok {
-			m := v
-			for _, tok := range e.InstanceLocation {
-				m = m.(map[string]any)[tok]
-			}
-			if _, has := m.(map[string]any)[k.Property]; !has {
-				misplaced++
-			}
+		if k, ok := e.ErrorKind.(*kind.PropertyNames); ok && !holdsKey(v, e.InstanceLocation, k.Property) {
+			misplaced++
 		}
 		for _, c := range e.Causes {
 			walk(c)
@@ -239,4 +233,19 @@ func TestPropertyNamesLocationBug(t *testing.T) {
 	if misplaced == 0 {
 		t.Fatal("jsonschema now reports propertyNames errors at the right map; drop the workaround in schema_errors.go")
 	}
+}
+
+// holdsKey reports whether path leads to a map with the key; a corrupted
+// path can end anywhere, so anything else counts as not holding it.
+func holdsKey(v any, path []string, key string) bool {
+	for _, tok := range path {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+		v = m[tok]
+	}
+	m, ok := v.(map[string]any)
+	_, has := m[key]
+	return ok && has
 }
