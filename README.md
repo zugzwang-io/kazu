@@ -35,7 +35,7 @@ scenarios:
       - { service: postgres, fault: down, after: 30s, for: 15s }
 
 checks:                              # on top of built-in crash, error-rate, latency and recovery checks
-  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1", expect: empty }
+  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }
   - no_regression: { service: checkout, measure: p99, within: 10% }
   - image: ghcr.io/zugzwang-io/kazu-python:1    # checks that need code
     volumes: [./checks:/checks:ro]
