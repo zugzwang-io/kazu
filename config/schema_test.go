@@ -153,6 +153,7 @@ func TestSchemaRejects(t *testing.T) {
 		{"scenario name starting with a dash", head + "scenarios: { -a: {} }\n", "*", "invalid propertyName '-a'"},
 		{"unknown protocol", head + "edges: { a -> b: udp }\n", "/edges/a -> b", "value must be one of 'tcp', 'http', 'grpc'"},
 		{"tls without a key", head + "edges: { a -> b: { protocol: http, tls: { ca_cert: x } } }\n", "/edges/a -> b/tls", "missing property 'ca_key'"},
+		{"scenario duration: the traffic decides how long it runs", head + "scenarios: { s: { duration: 180s } }\n", "/scenarios/s", "additional properties 'duration' not allowed"},
 		{"telemetry, not in the schema yet", head + "telemetry: { collector: otel }\n", "", "additional properties 'telemetry' not allowed"},
 		{"auto_scenarios, not in the schema yet", head + "auto_scenarios: true\n", "", "additional properties 'auto_scenarios' not allowed"},
 		{"defaults, not in the schema yet", head + "defaults: { off: [latency] }\n", "", "additional properties 'defaults' not allowed"},
