@@ -122,7 +122,7 @@ func TestReference(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Checks[0].Image, wantImage) {
 		t.Errorf("image check = %+v", cfg.Checks[0].Image)
 	}
-	if sql := cfg.Checks[1].SQL; !sql.ExpectEmpty || sql.On != "postgres" || !strings.HasPrefix(sql.Query, "select order_id") {
+	if sql := cfg.Checks[1].SQL; sql.On != "postgres" || !strings.HasPrefix(sql.Query, "select order_id") {
 		t.Errorf("sql = %+v", sql)
 	}
 	if r := cfg.Checks[2].Recovers; *r != (config.Recovers{Service: "payments", Within: 30 * time.Second}) {
@@ -291,8 +291,8 @@ func TestChecks(t *testing.T) {
 checks:
   - http: { on: api, method: POST, path: /orders, expect: { status: 201, body: ord_ } }
   - http: { on: api, path: /healthz, expect: { status: 200 } }
-  - { name: settled, sql: { on: postgres, query: select 1, expect: 1 } }
-  - sql: { on: postgres, query: select 1, expect: "empty" }
+  - { name: settled, sql: { on: postgres, query: "select id from orders where status = 'pending'" } }
+  - sql: { on: postgres, query: select 2 }
   - slo: { service: checkout, measure: p99, max: 250ms }
   - metric: { query: up, min: 1, max: 3, no_data: warn }
 `)
@@ -304,11 +304,11 @@ checks:
 	if !reflect.DeepEqual(cfg.Checks[1].HTTP, want1) {
 		t.Errorf("http check with default method = %+v", cfg.Checks[1].HTTP)
 	}
-	if c := cfg.Checks[2]; c.Name != "settled" || c.SQL.ExpectEmpty || c.SQL.ExpectValue != "1" {
-		t.Errorf("sql expecting a value = %+v %+v", c, c.SQL)
+	if c := cfg.Checks[2]; c.Name != "settled" || *c.SQL != (config.SQL{On: "postgres", Query: "select id from orders where status = 'pending'"}) {
+		t.Errorf("named sql check = %+v %+v", c, c.SQL)
 	}
-	if c := cfg.Checks[3]; c.Name != "sql-4" || c.SQL.ExpectEmpty || c.SQL.ExpectValue != "empty" {
-		t.Errorf("quoted \"empty\" should be the literal text: %+v", c.SQL)
+	if c := cfg.Checks[3]; c.Name != "sql-4" || c.SQL.Query != "select 2" {
+		t.Errorf("unnamed sql check = %+v %+v", c, c.SQL)
 	}
 	if slo := cfg.Checks[4].SLO; slo.MaxLatency != 250*time.Millisecond || slo.MaxRate != 0 {
 		t.Errorf("slo on latency = %+v", slo)
@@ -322,11 +322,11 @@ checks:
 // a scenario runs has a distinct name.
 func TestScenarioChecks(t *testing.T) {
 	cfg := parse(t, `checks:
-  - sql: { on: postgres, query: select 1, expect: 1 }
+  - sql: { on: postgres, query: select 1 }
 scenarios:
   a:
     checks:
-      - sql: { on: postgres, query: select 2, expect: 2 }
+      - sql: { on: postgres, query: select 2 }
       - { name: mine, recovers: { service: payments, within: 30s } }
   b: {}
 `)
