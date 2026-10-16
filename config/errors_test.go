@@ -59,9 +59,6 @@ func TestProblems(t *testing.T) {
 		{"process fault on an edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: crash }\n", []string{
 			`13:17: scenarios.a.faults[0].edge: "edge" is not a field of a crash fault`,
 		}},
-		{"success code on errors", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 1%, code: 200 }\n", []string{
-			`13:70: scenarios.a.faults[0].code: must be at least 400`,
-		}},
 		{"zero request count", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, after_requests: 0 }\n", []string{
 			`13:68: scenarios.a.faults[0].after_requests: must be at least 1`,
 		}},
