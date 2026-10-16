@@ -135,6 +135,10 @@ func checkSystemExists(ps *problems, cfg *Config, dir string) {
 	case errors.Is(err, fs.ErrNotExist):
 		ps.add(path, fmt.Sprintf("%s not found (paths are relative to the config file)", rel))
 	case err != nil:
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
 		ps.add(path, fmt.Sprintf("%s can't be read: %v", rel, err))
 	case cfg.System.Manifests != "" && !st.IsDir():
 		ps.add(path, fmt.Sprintf("%s is not a directory; manifests names a directory of rendered manifests", rel))

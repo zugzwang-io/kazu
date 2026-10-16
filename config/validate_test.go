@@ -49,13 +49,19 @@ func TestRules(t *testing.T) {
 			`13:70: scenarios.a.faults[0].for: must be longer than zero`,
 		}},
 		{"request fault on a tcp edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> postgres, fault: timeout, rate: 5% }\n", []string{
-			`13:17: scenarios.a.faults[0].edge: a timeout fault needs an http or grpc edge; checkout -> postgres is tcp, so the proxy sees bytes, not requests`,
+			`13:17: scenarios.a.faults[0].edge: timeout faults need an http or grpc edge; checkout -> postgres is tcp, so the proxy sees bytes, not requests`,
+		}},
+		{"errors fault on a tcp edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> postgres, fault: errors, rate: 5%, code: 503 }\n", []string{
+			`13:17: scenarios.a.faults[0].edge: errors faults need an http or grpc edge; checkout -> postgres is tcp, so the proxy sees bytes, not requests`,
+		}},
+		{"misspelled connection", "checks:\n  - sql: { on: postgress, query: x }\n", []string{
+			`11:16: checks[0].sql.on: no connection named "postgress"; declare it under connections (did you mean "postgres"?)`,
 		}},
 		{"fault on traffic", "scenarios:\n  a:\n    faults:\n      - { service: traffic, fault: pause }\n", []string{
 			`13:20: scenarios.a.faults[0].service: traffic is the load, not part of the system; faults go on the system's services and edges`,
 		}},
 		{"network fault on a service with no inbound edges", "scenarios:\n  a:\n    faults:\n      - { service: fraud, fault: down }\n", []string{
-			`13:20: scenarios.a.faults[0].service: a down fault on a service applies to its declared inbound edges, and fraud has none; declare an edge into fraud`,
+			`13:20: scenarios.a.faults[0].service: down faults on a service apply to its declared inbound edges, and fraud has none; declare an edge into fraud`,
 		}},
 		{"request count on a service with only tcp edges", "scenarios:\n  a:\n    faults:\n      - { service: postgres, fault: crash, after_requests: 3 }\n", []string{
 			`13:60: scenarios.a.faults[0].after_requests: after_requests on a service counts requests on its declared http and grpc inbound edges, and postgres has none. Use after: <duration>`,
@@ -138,6 +144,10 @@ func TestAnchorRules(t *testing.T) {
 		}},
 		{"two faults with one name", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: x, edge: checkout -> postgres, fault: down }\n", []string{
 			`14:17: scenarios.a.faults[1].name: another fault in this scenario is already named "x"`,
+		}},
+		{"two loops, each reported once in file order", "scenarios:\n  a:\n    faults:\n      - { name: a, edge: checkout -> payments, fault: down, for: 5s, from: b }\n      - { name: b, edge: checkout -> payments, fault: down, for: 5s, from: a }\n      - { name: c, edge: checkout -> postgres, fault: down, for: 5s, from: d }\n      - { name: d, edge: checkout -> postgres, fault: down, for: 5s, from: c }\n", []string{
+			`13:76: scenarios.a.faults[0].from: faults count from each other in a loop: a -> b -> a`,
+			`15:76: scenarios.a.faults[2].from: faults count from each other in a loop: c -> d -> c`,
 		}},
 		{"a loop", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, for: 5s, from: z }\n      - { name: y, edge: checkout -> postgres, fault: down, for: 5s, from: { start: x } }\n      - { name: z, edge: payments -> postgres, fault: down, for: 5s, from: y }\n", []string{
 			`13:76: scenarios.a.faults[0].from: faults count from each other in a loop: x -> z -> y -> x`,
@@ -331,6 +341,11 @@ func TestLoadChecksSystemPath(t *testing.T) {
 	_, err = config.LoadContract(p)
 	if err == nil || !strings.Contains(err.Error(), "system.manifests: compose.yml is not a directory") {
 		t.Errorf("manifests naming a file: %v", err)
+	}
+	p = write("kazu.yaml", "system: compose.yml/inner.yml\ntraffic: { image: grafana/k6:1.0.0 }\n")
+	_, err = config.Load(p)
+	if want := p + ":1:9: system: compose.yml/inner.yml can't be read: not a directory"; err == nil || err.Error() != want {
+		t.Errorf("unreadable system path:\ngot  %v\nwant %s", err, want)
 	}
 	p = write("kazu.yaml", "system: "+dir+"\ntraffic: { image: grafana/k6:1.0.0 }\n")
 	_, err = config.Load(p)

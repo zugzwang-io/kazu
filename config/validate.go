@@ -114,9 +114,9 @@ func (v *validator) fault(path []string, ft *Fault) {
 	case ft.Service == Traffic:
 		v.ps.add(at("service"), "traffic is the load, not part of the system; faults go on the system's services and edges")
 	case known && layer == Request && !edge.Protocol.RequestLevel():
-		v.ps.add(at("edge"), fmt.Sprintf("%s fault needs an http or grpc edge; %s is %s, so the proxy sees bytes, not requests", article(ft.Kind), ft.Edge, edge.Protocol))
+		v.ps.add(at("edge"), fmt.Sprintf("%s faults need an http or grpc edge; %s is %s, so the proxy sees bytes, not requests", ft.Kind, ft.Edge, edge.Protocol))
 	case layer == Network && ft.Service != "" && len(v.cfg.Inbound(ft.Service)) == 0:
-		v.ps.add(at("service"), fmt.Sprintf("%s fault on a service applies to its declared inbound edges, and %s has none; declare an edge into %s", article(ft.Kind), ft.Service, ft.Service))
+		v.ps.add(at("service"), fmt.Sprintf("%s faults on a service apply to its declared inbound edges, and %s has none; declare an edge into %s", ft.Kind, ft.Service, ft.Service))
 	}
 
 	if f["delay"] != nil {
@@ -265,14 +265,6 @@ func (v *validator) requestTrigger(path []string, ft Fault, edge Edge) {
 		}
 	}
 	v.ps.add(path, fmt.Sprintf("after_requests on a service counts requests on its declared http and grpc inbound edges, and %s has none. Use after: <duration>", ft.Service))
-}
-
-// article prefixes a fault kind with "a" or "an".
-func article(k FaultKind) string {
-	if k != "" && strings.ContainsRune("aeiou", rune(k[0])) {
-		return "an " + string(k)
-	}
-	return "a " + string(k)
 }
 
 // grpcCodes are the gRPC status code names, in code order.
