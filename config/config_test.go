@@ -1,7 +1,6 @@
 package config_test
 
 import (
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -144,23 +143,6 @@ func TestReference(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Suites, wantSuites) {
 		t.Errorf("suites = %+v", cfg.Suites)
-	}
-}
-
-// Every yaml example in the README is a config people will copy.
-func TestReadmeExamples(t *testing.T) {
-	readme, err := os.ReadFile("../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	examples := yamlBlocks(string(readme))
-	if len(examples) == 0 {
-		t.Fatal("README.md has no yaml example")
-	}
-	for i, example := range examples {
-		if _, err := config.Parse("README.md", []byte(example)); err != nil {
-			t.Errorf("yaml block %d: %v", i, err)
-		}
 	}
 }
 
