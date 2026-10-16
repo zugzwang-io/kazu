@@ -274,20 +274,19 @@ func TestEdgeNameSpacing(t *testing.T) {
 }
 
 func TestChecks(t *testing.T) {
-	cfg := parse(t, `connections: { api: http://checkout:8080 }
-checks:
-  - http: { on: api, method: POST, path: /orders, expect: { status: 201, body: ord_ } }
-  - http: { on: api, path: /healthz, expect: { status: 200 } }
+	cfg := parse(t, `checks:
+  - http: { on: postgres, method: POST, path: /orders, expect: { status: 201, body: ord_ } }
+  - http: { on: postgres, path: /healthz, expect: { status: 200 } }
   - { name: settled, sql: { on: postgres, query: "select id from orders where status = 'pending'" } }
   - sql: { on: postgres, query: select 2 }
   - slo: { service: checkout, measure: p99, max: 250ms }
   - metric: { query: up, min: 1, max: 3, no_data: warn }
 `)
-	want0 := &config.HTTPRequest{On: "api", Method: "POST", Path: "/orders", ExpectStatus: 201, ExpectBody: "ord_"}
+	want0 := &config.HTTPRequest{On: "postgres", Method: "POST", Path: "/orders", ExpectStatus: 201, ExpectBody: "ord_"}
 	if !reflect.DeepEqual(cfg.Checks[0].HTTP, want0) {
 		t.Errorf("http check = %+v", cfg.Checks[0].HTTP)
 	}
-	want1 := &config.HTTPRequest{On: "api", Method: "GET", Path: "/healthz", ExpectStatus: 200}
+	want1 := &config.HTTPRequest{On: "postgres", Method: "GET", Path: "/healthz", ExpectStatus: 200}
 	if !reflect.DeepEqual(cfg.Checks[1].HTTP, want1) {
 		t.Errorf("http check with default method = %+v", cfg.Checks[1].HTTP)
 	}
