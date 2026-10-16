@@ -143,7 +143,7 @@
           "$ref": "#/$defs/service"
         },
         "duration": {
-          "description": "Overrides the computed KAZU_DURATION.",
+          "description": "How long traffic runs (KAZU_DURATION); 120s when unset.",
           "$ref": "#/$defs/duration"
         },
         "not_exercised": { "$ref": "#/$defs/severity" },

@@ -90,7 +90,7 @@ Driver (compose):
 - [ ] driver 1/4: load the system with compose-go — services, healthchecks, one-shot jobs (`service_completed_successfully`), `--base`/`--head` variable interpolation
 - [ ] driver 2/4: project rewrite — a proxy service per declared edge, `extra_hosts` on the caller only, a project name per trial
 - [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED`/`KAZU_DURATION`/scenario `env`, wait for exit, delete
-- [ ] driver 4/4: trial plan — scenarios × {base, head}; `KAZU_DURATION` from the last fault plus recovery window plus margin, `duration:` override; rejects any config field the runtime doesn't implement yet, naming it ([ADR-0007](docs/adr/0007-the-planner-rejects-what-it-cant-run.md))
+- [ ] driver 4/4: trial plan — scenarios × {base, head}; `KAZU_DURATION` is the scenario's `duration:`, 120 s by default ([ADR-0006](docs/adr/0006-fixed-traffic-duration.md)); rejects any config field the runtime doesn't implement yet, naming it ([ADR-0007](docs/adr/0007-the-planner-rejects-what-it-cant-run.md))
 - [ ] controller: pushes programs to proxies, starts their clocks at traffic start, collects counters; the landed check turns a fault that never applied into **not exercised** with its reason
 
 Checks:

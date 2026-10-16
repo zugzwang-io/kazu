@@ -73,7 +73,7 @@ Four components, each with one job, one entry point and one exit signal. **Every
 | Component | Lives in | Owns | Entry | Exit |
 |---|---|---|---|---|
 | **System** | `docker-compose.yml` (or rendered manifests) | Services, mocks, schema, seed data. All setup, as one-shot jobs. Nothing Kazu-specific, and no load | Kazu starts it, fresh for every trial | **Ready:** every healthcheck or readiness probe passes and every one-shot job has exited 0. After the trial Kazu deletes it; there is no cleanup step |
-| **Traffic** | A compose-style service definition (`image`, `command`, `volumes`, `environment`) in `kazu.yaml`; a scenario can override it | What requests to send, how fast, for how long. It generates load and never judges | Kazu starts it once the system is ready, on the system's network, with `KAZU_SEED`, `KAZU_DURATION` and the scenario's env vars | **The process exits.** Exit 0 means the load ran (a default check). It must run for `KAZU_DURATION`, which covers the last fault plus the recovery window; if it stops early, the scenario is *not exercised* |
+| **Traffic** | A compose-style service definition (`image`, `command`, `volumes`, `environment`) in `kazu.yaml`; a scenario can override it | What requests to send, how fast, for how long. It generates load and never judges | Kazu starts it once the system is ready, on the system's network, with `KAZU_SEED`, `KAZU_DURATION` and the scenario's env vars | **The process exits.** Exit 0 means the load ran (a default check). It must run for `KAZU_DURATION`, the scenario's `duration:` (120 s by default); if it stops early, the scenario is *not exercised* |
 | **Checks** | The `checks:` list in `kazu.yaml`: one-line checks, plus code checks in a compose-style service using a Kazu SDK image | Judging, and nothing else | Kazu starts it per trial, outside the system, and talks to it over stdin/stdout; it calls each check at its point in the lifecycle | **Pass or fail, with a message**, per check |
 | **`kazu.yaml`** | The repo | Declarations only: system, traffic, edges, connections, scenarios, checks, suites, gate settings | — | — |
 
@@ -240,7 +240,7 @@ suites:
 - run: kazu run --suite pr --base TAG=${{ github.event.pull_request.base.sha }} --head TAG=${{ github.sha }} --junit reports/kazu.xml --markdown $GITHUB_STEP_SUMMARY
 ```
 
-Her compose file never mentions Kazu, and her load script only reads two variables Kazu sets. `KAZU_DURATION` differs per scenario: for `db-blip` it is 20 s before the fault + 15 s of outage + 60 s of recovery + a 10 s margin = 105 s, so nobody computes it by hand.
+Her compose file never mentions Kazu, and her load script only reads two variables Kazu sets. `KAZU_DURATION` is each scenario's `duration:`, 120 s unless it sets one: `db-blip`'s outage ends at 35 s, leaving 85 s to watch recovery.
 
 ### 4.3 Traffic
 
@@ -290,7 +290,7 @@ export const options = {
 | Variable | Meaning |
 |---|---|
 | `KAZU_SEED` | The run's seed. Derive keys and IDs from it so base and head send the same sequence |
-| `KAZU_DURATION` | How long to send, as a k6 duration (`105s`): the end of the scenario's last time-triggered fault plus the recovery window (the longest of `defaults.recovers` and any `recovers:` check) plus 10 s. Scenarios whose faults use request-count triggers (HTTP/gRPC edges only) can't be timed in advance, so they default to 120 s; a scenario's `duration:` overrides either |
+| `KAZU_DURATION` | How long to send, as a k6 duration (`120s`): the scenario's `duration:`, 120 s by default ([ADR-0006](docs/adr/0006-fixed-traffic-duration.md)). A fault that hasn't fired by then, or ended too late to watch recovery, makes the scenario *not exercised*; a longer `duration:` fixes it |
 
 Plus whatever the scenario's `env:` sets for `traffic`.
 
@@ -357,7 +357,7 @@ scenarios:
       - { edge: checkout -> payments, fault: down, after: 20s, for: 20s }
   soak:
     traffic: { command: [run, /load/soak.js] }  # merged over the default traffic definition
-    duration: 180s                    # overrides the computed KAZU_DURATION
+    duration: 180s                    # how long traffic runs (KAZU_DURATION); 120s by default
     faults:
       - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
   rare-errors:
@@ -874,7 +874,7 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | Two check timings, `@after` and `@eventually`; no `@during`, no executable-check tier | YAGNI: every modelled failure is visible after traffic exits; SDK images and one-line checks cover every language |
 | k6 is the one supported traffic tool; the template is a k6 script, not a Kazu requests format | Constant arrival rate built in, scriptable multi-step flows, one official image, the largest user base. A template avoids designing and maintaining a second format. Any image still works |
 | Kazu never embeds k6 | k6 is AGPL-3.0; running its image as a separate container keeps Kazu Apache 2.0 |
-| Kazu computes `KAZU_DURATION` per scenario | Nobody hand-calculates fault plus recovery time; a too-short load was the most likely setup mistake |
+| Kazu computes `KAZU_DURATION` per scenario | Nobody hand-calculates fault plus recovery time; a too-short load was the most likely setup mistake. *Superseded by ADR-0006: a fixed `duration:` per scenario, 120 s by default; too short is reported as not exercised* |
 | No traffic recording and no observability-driven traffic | YAGNI: the template covers simple cases and existing k6 scripts cover the rest; observability data has the shape of traffic but not the payloads, and would pull production data into CI |
 | Base and head chosen by variables the system file interpolates; images pulled, never built | Works with any tagging scheme and keeps builds out of Kazu; CI already publishes images per commit. Git refs (Kazu builds both) and per-service image maps were the alternatives |
 | Head's traffic and checks run against both base and head | A PR can't weaken a check to hide its own regression, and load changes can't look like regressions. A check that errors on base is reported as incompatible, not as a verdict |
