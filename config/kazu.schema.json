@@ -219,10 +219,8 @@
         "jitter": { "$ref": "#/$defs/duration" },
         "rate": { "$ref": "#/$defs/share" },
         "code": {
-          "description": "An HTTP status (400 to 599) or a gRPC status name (UNAVAILABLE).",
+          "description": "An HTTP error status (503) or a gRPC status code or name (14, UNAVAILABLE); kazu checks the range against the edge's protocol.",
           "type": ["integer", "string"],
-          "minimum": 400,
-          "maximum": 599,
           "minLength": 1
         },
         "limit": { "$ref": "#/$defs/bandwidth" },
