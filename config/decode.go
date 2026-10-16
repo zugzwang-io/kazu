@@ -100,9 +100,6 @@ func (d *decoder) scenario(name string, n *yaml.Node) Scenario {
 		svc := service(t)
 		s.Traffic = &svc
 	}
-	if v := f["duration"]; v != nil {
-		s.Duration = d.duration(v)
-	}
 	if v := f["not_exercised"]; v != nil {
 		s.NotExercised = Severity(v.Value)
 	}

@@ -102,8 +102,6 @@ type Scenario struct {
 	// Config.Traffic (a non-empty Image, a non-nil Command or non-nil
 	// Volumes replace, Environment is merged).
 	Traffic *Service
-	// Duration overrides the computed KAZU_DURATION; zero means computed.
-	Duration time.Duration
 	// NotExercised is the scenario's severity for a fault that never
 	// landed; empty means not set.
 	NotExercised Severity

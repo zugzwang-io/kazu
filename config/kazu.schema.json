@@ -142,10 +142,6 @@
           "description": "Merged over the default traffic definition.",
           "$ref": "#/$defs/service"
         },
-        "duration": {
-          "description": "Overrides the computed KAZU_DURATION.",
-          "$ref": "#/$defs/duration"
-        },
         "not_exercised": { "$ref": "#/$defs/severity" },
         "checks": {
           "description": "Checks for this scenario only, run with the top-level checks.",
