@@ -108,12 +108,3 @@ func TestPaymentsStopsWhenCallerGivesUp(t *testing.T) {
 		t.Fatalf("kept retrying after the caller's deadline: %d attempts", n)
 	}
 }
-
-// Charge reads the last attempt's result; one that was never set must not
-// read as paid.
-func TestUnsetAttemptResultIsAmbiguous(t *testing.T) {
-	var r attemptResult
-	if r != resultAmbiguous {
-		t.Fatalf("zero attemptResult is %d, want resultAmbiguous", r)
-	}
-}

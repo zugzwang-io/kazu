@@ -88,6 +88,7 @@ func (p *PaymentsClient) attempt(ctx context.Context, o Order) attemptResult {
 	body, _ := json.Marshal(map[string]any{"order_id": o.ID, "amount_cents": o.AmountCents})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.URL+"/charges", bytes.NewReader(body))
 	if err != nil {
+		slog.Error("payments request", "order", o.ID, "url", p.URL, "err", err)
 		return resultDeclined
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -104,12 +105,11 @@ func (p *PaymentsClient) attempt(ctx context.Context, o Order) attemptResult {
 	// Read the body to the end so the connection goes back into the pool.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		slog.Warn("payments attempt", "order", o.ID, "status", resp.StatusCode)
-	}
-	switch {
-	case resp.StatusCode/100 == 2:
+	if resp.StatusCode/100 == 2 {
 		return resultPaid
+	}
+	slog.Warn("payments attempt", "order", o.ID, "status", resp.StatusCode)
+	switch {
 	case resp.StatusCode == http.StatusServiceUnavailable:
 		return resultNotProcessed // payments sheds before doing any work
 	case resp.StatusCode/100 == 4:
