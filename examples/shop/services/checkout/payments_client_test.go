@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -10,6 +11,9 @@ import (
 	"testing"
 	"time"
 )
+
+// reset, as a scripted code, resets the connection after reading the request.
+const reset = -1
 
 // scripted serves one response per attempt from codes; 0 means "hang past the
 // attempt timeout" and reset means "reset the connection after reading the
@@ -41,8 +45,6 @@ func (s *scripted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(code)
 }
 
-const reset = -1
-
 // resetConn sends a TCP RST instead of a response: payments may have
 // charged, but the caller can't know.
 func resetConn(w http.ResponseWriter) {
@@ -50,8 +52,14 @@ func resetConn(w http.ResponseWriter) {
 	if err != nil {
 		panic(err)
 	}
-	_ = conn.(*net.TCPConn).SetLinger(0)
-	_ = conn.Close()
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		panic(fmt.Sprintf("resetConn: %T is not a TCP connection", conn))
+	}
+	if err := tcp.SetLinger(0); err != nil {
+		panic(err)
+	}
+	_ = tcp.Close()
 }
 
 func (s *scripted) attempts() []string {
