@@ -10,7 +10,7 @@ import (
 	"github.com/zugzwang-io/kazu/config"
 )
 
-// The two configs in DESIGN.md load cleanly and decode to what they say.
+// The documented configs load cleanly and decode to what they say.
 func TestReference(t *testing.T) {
 	cfg, err := config.Load("testdata/reference.yaml")
 	if err != nil {
@@ -209,7 +209,7 @@ func firstFault(t *testing.T, fields string) config.Fault {
 	return cfg.Scenarios[0].Faults[0]
 }
 
-// Every string format in ADR-0002 decodes to the value it names.
+// Every string format decodes to the value it names.
 func TestFormats(t *testing.T) {
 	durations := map[string]time.Duration{"300ms": 300 * time.Millisecond, "1.5s": 1500 * time.Millisecond, "1m30s": 90 * time.Second, "2h": 2 * time.Hour, "0s": 0}
 	for text, want := range durations {
