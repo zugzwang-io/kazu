@@ -65,15 +65,21 @@ Merged 2026-10-16; ADR-0002 and ADR-0004 accepted. Held until this plan's fronte
 
 ## Phase 3 — Walking skeleton: `kazu run` end to end (DESIGN §8 step 1)
 
-Done when `kazu run` drives the shop's `checkout → payments → postgres` through one scenario, base and head, and rows V0 and S1–S3 gate Kazu's own PRs. Three stacks (proxy, driver, checks) can proceed in parallel; the controller, verdict and CLI bullets join them.
+Done when `kazu run` drives the shop's `checkout → payments → postgres` through one scenario, base and head, and rows V0, S1–S3 and S14 gate Kazu's own PRs. S14 expects REGRESSED, so the gate catches a Kazu that passes everything, not only one that fails everything.
+
+Order (2026-10-16 foundations review): the networking spike first, then the thinnest slice that gates the rows: proxy forwarder and `down`, gRPC control, driver, controller with the landed check, the one-line `sql` check run by the host, verdict and `--json`. `latency`, the checks SDK and `@after` follow. The shop fixes below are independent and go first, because they change how the shop behaves under the faults the slice injects.
+
+Networking (derisk first):
+
+- [ ] spike → ADR-0005: reach the trial network from the host. On a GitHub-hosted Linux runner and on macOS, bring the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP and a sealed (`internal`) network; from the host, read the proxy's counters and run a SQL query against `postgres`. Try both options (published ports with URL rewriting; one in-network helper container driven from the host) and record the choice
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
 - [ ] proxy 1/5: TCP forwarder with connection and byte counters; `kazu proxy` subcommand
 - [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in both directions, seeded; records the open latency decision in SPEC.md
-- [ ] proxy 3/5: `down` fault — refuses new connections and cuts live ones for its window (pooled connections must not ride through)
+- [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`
 - [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; applied-fault counters for the landed check
-- [ ] proxy 5/5: `kazu.proxy.v1` Protobuf + gRPC control service (load program, start clock, read counters); `buf` set up for the repo
+- [ ] proxy 5/5: `kazu.proxy.v1` Protobuf + gRPC control service (load program, start clock, read counters); `buf` set up for the repo (the checks protocol reuses it later)
 - [ ] image: Dockerfile for the `kazu` image; the driver runs proxies from the image matching its own version (GHCR publishing is Phase 5)
 
 Driver (compose):
@@ -86,22 +92,25 @@ Driver (compose):
 
 Checks:
 
-- [ ] checks 1/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
-- [ ] checks 2/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
-- [ ] checks 3/4: check host — runs the checks container per trial over stdio, answers `sql` through `connections:`; a check that errors on base is **incompatible with base**
-- [ ] checks 4/4: `sql:` one-line check, through the same connection path: passes when the query returns no rows; reads only the first few rows, under a statement timeout
+- [ ] checks 1/4: `sql:` one-line check run by the host through `connections:` (no SDK): passes when the query returns no rows; reads only the first few rows, under a statement timeout. On the slice
+- [ ] checks 2/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
+- [ ] checks 3/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
+- [ ] checks 4/4: check host — runs the checks container per trial over stdio, answers `sql` through the same connection path; a check that errors on base is **incompatible with base**
 
 Verdict and CLI:
 
-- [ ] verdict: per scenario, a check that passes on base and fails on head is REGRESSED, a violation on both is a pass; terminal output (§4.8 layout, pass/REGRESSED/not exercised only); `--json` result
+- [ ] verdict: per scenario, a check that passes on base and fails on head is REGRESSED, a violation on both is a pass; terminal output (§4.8 layout, pass/REGRESSED/not exercised only); `--json` result with per-edge proxy counters and a defined result for a config error (S2 and S3 assert on them)
 - [ ] cli: `kazu run [scenario] [--suite] --base --head [--seed] [--json]` wired through config → plan → driver → controller → checks → verdict; one shop trial end to end
 
 Shop and the e2e gate:
 
 - [ ] templates: `templates/k6/traffic.js` (DESIGN §4.3) and the shop's `load/traffic.js` edited from it
-- [ ] shop: step-1 `kazu.yaml`, `safety/` configs for S1–S3, `expectations.yaml` with V0 and S1–S3
+- [ ] shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
+- [ ] shop: a test for a connection reset mid-request (→ `pending`); integration tests open one pool per service with production settings and `search_path`, not one shared pool
+- [ ] shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
+- [ ] shop: step-1 `kazu.yaml` with a liveness check (some order got paid, so zero-row checks can't pass on no traffic), `safety/` configs for S1–S3 and S14, `expectations.yaml` with V0, S1–S3 and S14
 - [ ] shop: `SHOP_TRAP_PAYMENTS_BY_IP`, with the plain Go test showing the alias is bypassed
-- [ ] e2e gate: workflow that builds the binary and SDK image and runs the shop as a customer would; a Go asserter (not Kazu) compares each row's JSON to `expectations.yaml`; rows V0, S1–S3 become required checks
+- [ ] e2e gate: workflow that builds the binary and SDK image and runs the shop as a customer would; a Go asserter (not Kazu) compares each row's JSON to `expectations.yaml` and requires nonzero user-facing edge counters on V0 and S2; rows V0, S1–S3 and S14 become required checks
 
 ## Phase 4 — Trustworthy (DESIGN §8 step 2)
 
