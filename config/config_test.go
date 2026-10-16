@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -234,6 +235,10 @@ func TestRejectsLossyNumbers(t *testing.T) {
 		{"duration overflow", "scenarios: { a: { faults: [ { service: payments, fault: down, after: 9999999999999h } ] } }\n", "is not a duration Kazu can hold"},
 		{"percent overflow", "checks: [ { no_regression: { service: payments, measure: p99, within: 1" + strings.Repeat("0", 400) + "% } } ]\n", "is too large a number"},
 		{"bandwidth overflow", "scenarios: { a: { faults: [ { edge: checkout -> payments, fault: bandwidth, limit: 99999999999gbps } ] } }\n", "is too large a bandwidth"},
+		{"status past int64 is still a number to the schema", "checks: [ { http: { on: postgres, path: /x, expect: { status: 18446744073709551615 } } } ]\n", "checks[0].http.expect.status: must be at most 599"},
+		{"request count past int64", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 18446744073709551615 } ] } }\n", "18446744073709551615 is too large a number"},
+		{"infinite metric bound", "checks: [ { metric: { query: up, max: .inf } } ]\n", "kazu.yaml:10:39: .inf is not a finite number"},
+		{"NaN metric bound", "checks: [ { metric: { query: up, min: .NaN } } ]\n", "kazu.yaml:10:39: .NaN is not a finite number"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -341,9 +346,12 @@ func TestSystemAndScenarioShapes(t *testing.T) {
 	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].Name != "baseline" || cfg.Scenarios[0].Faults != nil || cfg.Scenarios[1].Faults != nil {
 		t.Errorf("empty scenarios = %+v", cfg.Scenarios)
 	}
-	cfg = parse(t, "scenarios: { a: { traffic: { command: [] } } }\n")
+	cfg = parse(t, "scenarios: { a: { traffic: { command: [], volumes: [] } } }\n")
 	if cmd := cfg.Scenarios[0].Traffic.Command; cmd == nil || len(cmd) != 0 {
 		t.Errorf("command: [] = %#v, want an empty slice (replace), not nil (keep)", cmd)
+	}
+	if vols := cfg.Scenarios[0].Traffic.Volumes; vols == nil || len(vols) != 0 {
+		t.Errorf("volumes: [] = %#v, want an empty slice (replace), not nil (keep)", vols)
 	}
 }
 
@@ -354,6 +362,10 @@ func TestParseErrors(t *testing.T) {
 		{"second document", base + "---\nsystem: other.yml\n", "more than one YAML document"},
 		{"invalid yaml", "system: [\n", "invalid YAML"},
 		{"scalar root", "hello\n", "the file must be a map"},
+		{"merge key that is not a map", base + "scenarios: { a: { <<: 5 } }\n", "a merge key (<<) takes a map or a list of maps"},
+		{"merge list with a non-map", base + "scenarios: { a: { <<: [5] } }\n", "a merge key (<<) takes a map or a list of maps"},
+		{"aliases that expand past the node limit", aliasBomb(9), "the file nests or repeats aliases too deeply to read"},
+		{"nesting past the depth limit", base + "x-deep: " + strings.Repeat("[", 101) + strings.Repeat("]", 101) + "\n", "the file nests or repeats aliases too deeply to read"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -366,6 +378,17 @@ func TestParseErrors(t *testing.T) {
 	if _, err := config.LoadContract("testdata/missing.yaml"); err == nil || !strings.Contains(err.Error(), "missing.yaml") {
 		t.Errorf("Load of a missing file = %v", err)
 	}
+}
+
+// aliasBomb is a few lines of YAML whose aliases expand to 9^levels nodes.
+func aliasBomb(levels int) string {
+	var b strings.Builder
+	b.WriteString("l0: &l0 [x, x, x, x, x, x, x, x, x]\n")
+	for i := 1; i < levels; i++ {
+		ref := fmt.Sprintf("*l%d", i-1)
+		fmt.Fprintf(&b, "l%d: &l%d [%s]\n", i, i, strings.TrimSuffix(strings.Repeat(ref+", ", 9), ", "))
+	}
+	return b.String()
 }
 
 // YAML anchors and merge keys mean what they mean in compose files.

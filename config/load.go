@@ -80,7 +80,12 @@ func parse(data []byte, built bool) (*Config, *problems) {
 		ps.add(nil, "the file must be a map of keys such as system, traffic and edges")
 		return nil, ps
 	}
-	if err := compiledSchema().Validate(toAny(root)); err != nil {
+	before := len(ps.list)
+	tree := f.toAny(root)
+	if len(ps.list) > before {
+		return nil, ps
+	}
+	if err := compiledSchema().Validate(tree); err != nil {
 		var ve *jsonschema.ValidationError
 		if !errors.As(err, &ve) {
 			ps.add(nil, err.Error())
