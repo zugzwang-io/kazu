@@ -264,16 +264,13 @@
         "volumes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "environment": { "$ref": "#/$defs/environment" },
         "sql": {
+          "description": "Passes when the query returns no rows: select what would be a violation.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["on", "query", "expect"],
+          "required": ["on", "query"],
           "properties": {
             "on": { "$ref": "#/$defs/name" },
-            "query": { "type": "string", "minLength": 1 },
-            "expect": {
-              "description": "\"empty\" for no rows, or the single value the query must return.",
-              "$ref": "#/$defs/scalar"
-            }
+            "query": { "type": "string", "minLength": 1 }
           }
         },
         "http": {
