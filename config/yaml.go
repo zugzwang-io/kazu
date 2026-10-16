@@ -1,7 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -118,19 +121,21 @@ func isMerge(k *yaml.Node) bool {
 }
 
 // toAny turns a flattened tree into the JSON-like values the schema
-// validator reads. Map keys are taken as written.
-func toAny(n *yaml.Node) any {
+// validator reads. Map keys are taken as written. An integer past int64
+// stays an exact number, so the schema judges its range; infinity and NaN
+// have no JSON form, so they are problems here.
+func (f *flattener) toAny(n *yaml.Node) any {
 	switch n.Kind {
 	case yaml.MappingNode:
 		m := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			m[n.Content[i].Value] = toAny(n.Content[i+1])
+			m[n.Content[i].Value] = f.toAny(n.Content[i+1])
 		}
 		return m
 	case yaml.SequenceNode:
 		s := make([]any, len(n.Content))
 		for i, c := range n.Content {
-			s[i] = toAny(c)
+			s[i] = f.toAny(c)
 		}
 		return s
 	case yaml.ScalarNode:
@@ -147,10 +152,17 @@ func toAny(n *yaml.Node) any {
 			if n.Decode(&i) == nil {
 				return i
 			}
+			var u uint64
+			if n.Decode(&u) == nil {
+				return json.Number(strconv.FormatUint(u, 10))
+			}
 		case "!!float":
-			var f float64
-			if n.Decode(&f) == nil {
-				return f
+			var x float64
+			if n.Decode(&x) == nil {
+				if math.IsInf(x, 0) || math.IsNaN(x) {
+					f.ps.put(Problem{Line: n.Line, Column: n.Column, Message: n.Value + " is not a finite number"})
+				}
+				return x
 			}
 		}
 		return n.Value
