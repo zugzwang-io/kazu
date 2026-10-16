@@ -26,12 +26,12 @@ scenarios:
     faults:
       - { edge: checkout -> postgres, fault: down, after: 20s, for: 15s }
     checks:
-      - sql: { on: postgres, query: "select count(*) from checkout.orders where status = 'pending'", expect: 0 }
+      - sql: { on: postgres, query: "select id from checkout.orders where status = 'pending'" }
 
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1
     volumes: [./checks:/checks:ro]
-  - sql: { on: postgres, query: "select order_id from payments.charges group by order_id having count(*) > 1", expect: empty }
+  - sql: { on: postgres, query: "select order_id from payments.charges group by order_id having count(*) > 1" }
 
 suites:
   pr: [slow-payments, db-blip]

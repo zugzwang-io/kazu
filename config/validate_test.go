@@ -145,7 +145,7 @@ func TestAnchorRules(t *testing.T) {
 		{"names belong to their scenario", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, for: 5s }\n  b:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: x }\n", []string{
 			`16:58: scenarios.b.faults[0].from: no fault named "x" in this scenario`,
 		}},
-		{"scenario check named like a top-level one", "checks:\n  - { name: c, sql: { on: postgres, query: x, expect: empty } }\nscenarios:\n  a:\n    checks:\n      - { name: c, sql: { on: postgres, query: y, expect: empty } }\n", []string{
+		{"scenario check named like a top-level one", "checks:\n  - { name: c, sql: { on: postgres, query: x } }\nscenarios:\n  a:\n    checks:\n      - { name: c, sql: { on: postgres, query: y } }\n", []string{
 			`15:17: scenarios.a.checks[0].name: another check is already named "c"`,
 		}},
 	}
@@ -177,8 +177,8 @@ connections:
   postgres: postgres://postgres:dev@postgres/shop
   api: http://checkout:8080
 checks:
-  - sql: { on: pg, query: x, expect: empty }
-  - sql: { on: api, query: x, expect: empty }
+  - sql: { on: pg, query: x }
+  - sql: { on: api, query: x }
   - http: { on: postgres, path: /x, expect: { status: 200 } }
   - slo: { service: postgres, measure: p99, max: 0s }
   - metric: { query: up, min: 2, max: 1 }

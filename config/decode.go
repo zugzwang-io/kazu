@@ -215,13 +215,7 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 		svc := service(n)
 		c.Image = &svc
 	case SQLCheck:
-		s := &SQL{On: bf["on"].Value, Query: bf["query"].Value}
-		if e := bf["expect"]; e.Value == "empty" && !quoted(e) {
-			s.ExpectEmpty = true
-		} else {
-			s.ExpectValue = e.Value
-		}
-		c.SQL = s
+		c.SQL = &SQL{On: bf["on"].Value, Query: bf["query"].Value}
 	case HTTPCheck:
 		h := &HTTPRequest{On: bf["on"].Value, Method: "GET", Path: bf["path"].Value}
 		if m := bf["method"]; m != nil {
@@ -361,10 +355,6 @@ func fields(n *yaml.Node) map[string]*yaml.Node {
 		m[kv.k.Value] = kv.v
 	}
 	return m
-}
-
-func quoted(n *yaml.Node) bool {
-	return n.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle) != 0
 }
 
 // service reads a compose-style block as written. An explicit `command: []`

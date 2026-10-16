@@ -71,7 +71,7 @@ func TestProblems(t *testing.T) {
 		{"check without a kind", "checks:\n  - { name: x }\n", []string{
 			`11:5: checks[0]: needs one of image, sql, http, recovers, no_regression, slo or metric`,
 		}},
-		{"check with two kinds", "checks:\n  - { sql: { on: postgres, query: x, expect: empty }, recovers: { service: payments, within: 1s } }\n", []string{
+		{"check with two kinds", "checks:\n  - { sql: { on: postgres, query: x }, recovers: { service: payments, within: 1s } }\n", []string{
 			`11:5: checks[0]: has sql and recovers; keep one`,
 		}},
 		{"volumes without an image", "checks:\n  - { volumes: [./x:/x] }\n", []string{
