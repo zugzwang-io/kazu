@@ -244,13 +244,10 @@ type Check struct {
 	Metric       *Metric
 }
 
-// SQL runs Query on a connection after traffic exits.
+// SQL runs Query on a connection after traffic exits and passes when it
+// returns no rows: the query selects violations.
 type SQL struct {
 	On, Query string
-	// ExpectEmpty means no rows; otherwise the query returns one value,
-	// compared as text with ExpectValue.
-	ExpectEmpty bool
-	ExpectValue string
 }
 
 // HTTPRequest sends one request to a connection after traffic exits. Method
