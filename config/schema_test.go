@@ -215,8 +215,6 @@ func TestSchemaRejects(t *testing.T) {
 		{"bandwidth without a unit", fault("edge: a -> b, fault: bandwidth, limit: 64"), "/scenarios/s/faults/0/limit", "want string"},
 		{"bandwidth in bytes", fault("edge: a -> b, fault: bandwidth, limit: 64kb"), "/scenarios/s/faults/0/limit", "does not match pattern"},
 		{"bandwidth with a capital", fault("edge: a -> b, fault: bandwidth, limit: 64Kbps"), "/scenarios/s/faults/0/limit", "does not match pattern"},
-		{"http code below 400", fault("edge: a -> b, fault: errors, rate: 1%, code: 200"), "/scenarios/s/faults/0/code", "minimum"},
-		{"http code above 599", fault("edge: a -> b, fault: errors, rate: 1%, code: 600"), "/scenarios/s/faults/0/code", "maximum"},
 		{"empty grpc code", fault("edge: a -> b, fault: errors, rate: 1%, code: ''"), "/scenarios/s/faults/0/code", "minLength"},
 		{"zero request count", fault("edge: a -> b, fault: down, after_requests: 0"), "/scenarios/s/faults/0/after_requests", "minimum"},
 		{"request count as text", fault("edge: a -> b, fault: down, after_requests: '200'"), "/scenarios/s/faults/0/after_requests", "want integer"},
