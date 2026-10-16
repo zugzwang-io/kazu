@@ -137,12 +137,12 @@ Every service uses the standard OpenTelemetry Go SDK and exports over OTLP to `O
 
 ## Traffic
 
-`load/traffic.js`: Kazu's k6 template (DESIGN.md §4.3), edited the way a customer would, run in `grafana/k6`. Kazu starts it once the system is ready; it sends at a constant arrival rate and exits after `KAZU_DURATION`.
+`load/traffic.js`: Kazu's k6 template (DESIGN.md §4.3), edited the way a customer would, run in `grafana/k6`. Kazu starts it once the system is ready; it sends at a constant arrival rate and exits after `DURATION`.
 
 | Env var | Set by | Effect |
 |---|---|---|
 | `KAZU_SEED` | Kazu | Idempotency keys and amounts derive from it, so base and head send the same sequence. Amounts: about 70% below 1,000 cents, 30% at or above (so the fraud edge is exercised), and about 1% above the fraud limit |
-| `KAZU_DURATION` | Kazu | Per scenario |
+| `DURATION` | the scenario's `env` | How long to send; 120 s unless a scenario changes it |
 | `FLOW` | `kazu.yaml` | Weighted mix: `checkout` (create an order, then read it) and `browse` (read paid orders). Default `checkout:7,browse:3` |
 | `RATE` | template default | 100 iterations/s |
 | `DUPLICATE_RATE` | `kazu.yaml` | Fraction of orders submitted twice at once with the same key, like double-clicks. Default 0; the shop's config will use 0.05, and 0.3 in `double_click` |

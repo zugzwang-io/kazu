@@ -43,7 +43,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #29 CLAUDE.md: code never cites markdown docs (comments, docstrings, schema descriptions, fixtures)
 - [x] #30 CLAUDE.md: read uncovered lines before a PR; no coverage threshold
 - [x] #31 docs: ADR-0002 and ADR-0004 accepted, config decisions folded into DESIGN.md
-- [~] #32 plan: Phase 3 derisked after the 2026-10-16 foundations review (S14, networking spike, slice order, ADR-0003 accepted, ADR-0005 proposed)
+- [x] #32 plan: Phase 3 derisked after the 2026-10-16 foundations review (S14, networking spike, slice order, ADR-0003 accepted, ADR-0005 proposed)
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
@@ -89,8 +89,8 @@ Driver (compose):
 
 - [ ] driver 1/4: load the system with compose-go — services, healthchecks, one-shot jobs (`service_completed_successfully`), `--base`/`--head` variable interpolation
 - [ ] driver 2/4: project rewrite — a proxy service per declared edge, `extra_hosts` on the caller only, a project name per trial
-- [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED`/`KAZU_DURATION`/scenario `env`, wait for exit, delete
-- [ ] driver 4/4: trial plan — scenarios × {base, head}; `KAZU_DURATION` from the last fault plus recovery window plus margin, `duration:` override
+- [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED` and the scenario's `env`, wait for exit, stopping a trial still running after 30 min (*not exercised*, [ADR-0006](docs/adr/0006-fixed-traffic-duration.md)), delete
+- [ ] driver 4/4: trial plan — scenarios × {base, head}; rejects any config field the runtime doesn't implement yet, naming it ([ADR-0007](docs/adr/0007-the-planner-rejects-what-it-cant-run.md))
 - [ ] controller: pushes programs to proxies, starts their clocks at traffic start, collects counters; the landed check turns a fault that never applied into **not exercised** with its reason
 
 Checks:
