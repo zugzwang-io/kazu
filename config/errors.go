@@ -37,7 +37,7 @@ func (p Problem) String() string {
 }
 
 // Error prints one problem per line as file:line:col: path: message, in
-// file order.
+// file order, leaving out a position it doesn't have.
 func (e *Error) Error() string {
 	var b strings.Builder
 	for i, p := range e.Problems {
@@ -46,7 +46,10 @@ func (e *Error) Error() string {
 		}
 		b.WriteString(e.File)
 		if p.Line > 0 {
-			fmt.Fprintf(&b, ":%d:%d", p.Line, p.Column)
+			fmt.Fprintf(&b, ":%d", p.Line)
+		}
+		if p.Column > 0 {
+			fmt.Fprintf(&b, ":%d", p.Column)
 		}
 		b.WriteString(": ")
 		b.WriteString(p.String())
@@ -73,7 +76,13 @@ func (ps *problems) addAt(path []string, key bool, msg string) {
 	if n := lookup(ps.root, path, key); n != nil {
 		p.Line, p.Column = n.Line, n.Column
 	}
-	id := p.String()
+	ps.put(p)
+}
+
+// put records p once: the validator and the flattener can both report the
+// same node twice (several rules, an anchor used by several aliases).
+func (ps *problems) put(p Problem) {
+	id := fmt.Sprintf("%d:%d:%s", p.Line, p.Column, p.String())
 	if ps.seen[id] {
 		return
 	}

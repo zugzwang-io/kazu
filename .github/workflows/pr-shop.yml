@@ -1,18 +1,36 @@
-# Runs on PRs into main that touch the shop (or this file).
+# Runs on every PR. The shop jobs do their work only when the shop (or this
+# file) changed, and report as skipped otherwise. The gate is per job rather
+# than a workflow-level paths filter so the jobs always report a status and
+# can be required checks: a workflow that never triggers leaves a required
+# check "expected" forever and blocks the merge.
 name: pr-shop
 
 on:
   pull_request:
-    branches: [main]
-    paths: [examples/shop/**, .github/workflows/pr-shop.yml]
 
 defaults:
   run:
     working-directory: examples/shop
 
 jobs:
+  changes:
+    name: shop changes
+    runs-on: ubuntu-latest
+    outputs:
+      shop: ${{ steps.filter.outputs.shop }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shop:
+              - 'examples/shop/**'
+              - '.github/workflows/pr-shop.yml'
+
   shop-test:
     name: shop test
+    needs: changes
+    if: needs.changes.outputs.shop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +48,8 @@ jobs:
   # load is Kazu's job.
   shop-smoke:
     name: shop smoke
+    needs: changes
+    if: needs.changes.outputs.shop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
