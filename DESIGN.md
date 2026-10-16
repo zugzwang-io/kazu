@@ -327,10 +327,10 @@ edges:                                # faults apply only to declared edges
 connections:                          # what run.sql / run.http reach, by name
   postgres: postgres://postgres:dev@postgres/checkout
  
-telemetry:                            # optional; default: set OTEL_EXPORTER_OTLP_ENDPOINT on every service
+telemetry:                            # not in the schema yet (joins with Phase 6); default: set OTEL_EXPORTER_OTLP_ENDPOINT on every service
   collector: otel-collector           # or alias an existing collector service to Kazu's receiver
  
-auto_scenarios: true                  # optional: one generated scenario per service and per declared edge (§4.6)
+auto_scenarios: true                  # not in the schema yet (joins with Phase 6); one generated scenario per service and per declared edge (§4.6)
  
 scenarios:
   slow-payments:
@@ -339,6 +339,13 @@ scenarios:
   db-blip:
     faults:
       - { service: postgres, fault: down, after: 20s, for: 15s }   # every declared edge into postgres
+    checks:                           # this scenario only, on top of the top-level checks
+      - recovers: { service: checkout, within: 30s }
+  cascading:
+    faults:
+      - { name: slow-pay, edge: checkout -> payments, fault: latency, delay: 300ms, after: 20s, for: 30s }
+      - { edge: checkout -> postgres, fault: down, from: slow-pay, after: 5s, for: 10s }           # 5s after slow-pay ends
+      - { edge: checkout -> payments, fault: down, from: { start: slow-pay }, after: 10s, for: 5s } # overlaps it
   payments-dies-midflight:
     faults:
       - { service: payments, fault: crash, after_requests: 200, restart_after: 5s }
@@ -358,7 +365,7 @@ scenarios:
     faults:
       - { edge: payments -> fraud, fault: errors, rate: 1%, code: UNAVAILABLE, after: 20s }
  
-defaults:                             # built-in checks (§4.6); all on unless tuned or switched off
+defaults:                             # not in the schema yet (joins with Phase 5); built-in checks (§4.6), all on unless tuned or switched off
   latency_within: 20%                 # user-facing p99, head vs base
   error_rate_within: 0.5pp            # user-facing error rate, head vs base
   recovers_within: 60s                # user-facing error rate back to pre-fault level after each fault ends
@@ -368,7 +375,7 @@ defaults:                             # built-in checks (§4.6); all on unless t
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1     # code checks (§4.6); a compose-style service
     volumes: [./checks:/checks:ro]
-  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1", expect: empty }
+  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }   # passes on no rows
   - recovers: { service: payments, within: 30s }
   - no_regression: { service: payments, measure: p99, within: 10% }
   - slo: { service: checkout, measure: error_rate, max: 1% }    # absolute; fine for rates, risky for latency
@@ -380,7 +387,7 @@ suites:                               # named sets of scenarios; `kazu run --sui
   pr: [slow-payments, db-blip, double-click]
   release: all
  
-gate:
+gate:                                 # not in the schema yet (joins with Phase 5)
   fail_on: regression                 # or: violation
   trials: auto                        # adaptive; or a fixed number
   flaky: warn
@@ -388,6 +395,10 @@ gate:
   no_data: fail                       # a metric with no samples is not a pass
   underpowered: warn                  # a comparison too noisy to decide is reported, not guessed
 ```
+
+**What the schema carries today** ([ADR-0002](docs/adr/0002-kazu-yaml-schema-shape.md)). The published schema holds the top-level keys Kazu builds next; `telemetry`, `auto_scenarios`, `defaults` and `gate` join it when their phase is built. Inside each key the shape is a good-faith estimate of where the interface lands, and it can change until the first public release, breaking changes included. Before that release the schema is trimmed to what Kazu implements.
+
+**Shapes the reference doesn't show.** `command` takes a list only (compose's string form would need its shell-splitting rules); `environment` takes compose's map or `NAME=value` list. The `http` check is `{ on, path, method, expect: { status, body } }`, `method` defaulting to `GET` and `body` a substring. `slo.max` is a duration for latency measures and a percentage for `error_rate`. `metric` takes `max`/`min` or a relative `within`, not both, plus `no_data: warn`. Measures are `p50`, `p90`, `p95`, `p99`, `error_rate`. A scenario can be empty (`name: {}`): no faults. Names are letters, digits, `.`, `_` and `-`, starting with a letter or digit. A bare number where a duration or percentage goes is an error. The schema's `$id` is `https://zugzwang-io.github.io/kazu/kazu.schema.json`.
 
 **Edges.** Declared, never inferred. Protocol is `tcp` (network faults and connection-level measurement only), `http` or `grpc` (adds request-level faults, request-count triggers and per-request latency and errors). Kazu does not sniff or verify protocols; if an edge is declared `http` but carries something else, HTTP faults on it simply don't land and the landed check reports it. Edges from `traffic` are **user-facing**: the default checks read them.
 
@@ -412,6 +423,8 @@ A scenario's `faults:` is a list. Each fault is a map:
   jitter: 50ms
   after: 20s                    # when it starts: seconds from traffic start, or after_requests: N
   for: 15s                      # optional: how long it lasts; default until traffic ends
+  name: slow-pay                # optional: lets other faults count from this one
+  from: other-fault             # optional: after counts from that fault's end instead of traffic start
 ```
 
 | `fault` | Layer | Target | Fields | Example |
@@ -430,6 +443,7 @@ A scenario's `faults:` is a list. Each fault is a map:
 
 - `edge: a -> b` means one declared edge. `service: b` means **every declared inbound edge** (network faults) or the process (process and resource faults). Callers whose edges aren't declared are untouched; `kazu doctor` lists them.
 - `after` counts from traffic start; `after_requests` counts requests through the proxy.
+- **Relative triggers** ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)). `from:` makes `after` count from another fault in the same scenario: its name for its end, `{ start: name }` for its start, or a list for the latest of several (a join). Without `from`, faults are independent and overlap by their windows. Anchors are *planned* times: every fault's start and end resolve when the plan is built, so base and head get the same schedule and `KAZU_DURATION` stays computable. Using a fault's end needs that fault to have a `for` (a crash has none); loops are rejected. There are no triggers on system events ("once payments is healthy"): the schedule would then depend on the system, so base and head could get different timelines.
 - `down` must cut live connections, or pooled connections ride through the outage and the scenario tests nothing.
 - `crash` kills the container in place and lets it restart in the same container (compose) or the same pod (Kubernetes). Deleting a pod would change IPs and filesystems and make base and head behave differently.
 - Request-count triggers land at the same point in every run; wall-clock triggers drift more.
@@ -490,9 +504,9 @@ It works on any proxy measurement (`p99`, `error_rate`) and, as `within:`, on an
 
 #### The `checks:` list
 
-One list holds every user check. Each entry may have a `name:` (used in output; one-line checks are otherwise named after their kind and position) and is one of:
+One list holds every user check, and runs in every scenario. A scenario can add its own `checks:` (same entries), run on top of the top-level list in that scenario only, for checks that mean something only under its faults; names can't repeat a top-level check's. Each entry may have a `name:` (used in output; one-line checks are otherwise named after their kind and position) and is one of:
 - **`image:`** — code checks, as a compose-style service using a Kazu SDK image (below);
-- **`sql:`** — a query and the expected result (`expect: empty`, or a value);
+- **`sql:`** — a query that selects violations; it passes when it returns no rows. Kazu reads only the first few rows (for the failure message) under a statement timeout. Exact-row comparisons belong in a code check;
 - **`http:`** — a request and the expected status or body;
 - **`recovers:`** — a service's error rate back to its pre-fault level `within` a duration;
 - **`no_regression:`** — a proxy measurement no worse than base `within` a tolerance;
@@ -867,8 +881,8 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | No executable-check tier | Checks are an image; a shell script would need its own image anyway. SDK images and one-line checks cover it |
 | Request-count triggers only on HTTP/gRPC edges | A TCP proxy sees bytes, not requests; counting connections is meaningless with pooling, and parsing database protocols isn't worth it yet |
 | Auto scenarios (crash each service, take each edge down), opt-in | A zero-effort regression question using only default checks; opt-in because they multiply CI time. A small step towards Antithesis's autonomous faulting |
-| Faults and checks are structured YAML validated by a JSON schema, not a free-text grammar | No parser to write, editor autocomplete, nothing that reads as English but isn't. Only edge names, durations and percentages are parsed strings |
-| One `checks:` list holding one-line checks and the code-checks image | One place for every user check; the stale `invariants:` key is gone |
+| Faults and checks are structured YAML validated by a JSON schema, not a free-text grammar | No parser to write, editor autocomplete, nothing that reads as English but isn't. Only edge names, durations and percentages are parsed strings. *Schema scope and compatibility: ADR-0002* |
+| One `checks:` list holding one-line checks and the code-checks image | One place for every user check; the stale `invariants:` key is gone. *Extended by ADR-0002 (decision 13): scenarios can add their own checks* |
 | Traffic and the code-checks entry use compose service keys (`image`, `command`, `volumes`, `environment`) | No Kazu-specific way to mount files; every compose user already knows the shape |
 | Scenarios vary traffic with `env` knobs or a merged `traffic:` override; the k6 template has named flows | Different scenarios need different load (write-heavy, bursts, soaks) without one script full of branches; base and head still get identical traffic per scenario |
 | `suites:` kept | Teams want a fast PR set and a fuller release set; Kazu still needs no knowledge of where it runs, because CI passes `--suite` |
