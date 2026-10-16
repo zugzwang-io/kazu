@@ -144,8 +144,8 @@ const (
 	Network Layer = iota
 	// Request faults need a proxy that parses HTTP or gRPC, on one edge.
 	Request
-	// Process faults (process and resource faults) act on a
-	// service's container.
+	// Process faults act on a service's container: its process or its
+	// resources.
 	Process
 )
 
