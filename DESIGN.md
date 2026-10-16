@@ -293,7 +293,7 @@ export const options = {
 
 Plus whatever the scenario's `env:` sets for `traffic`.
 
-**How long traffic runs is the script's business** ([ADR-0006](docs/adr/0006-fixed-traffic-duration.md)): the template reads `DURATION` (120 s by default) and a scenario changes it through `env`. Kazu stops a trial whose traffic is still running after 30 minutes. A fault that hasn't fired by the time traffic exits, or ended too late to watch recovery, makes the scenario *not exercised*; a longer `DURATION` fixes it.
+**How long traffic runs is the script's business** ([ADR-0006](docs/adr/0006-traffic-decides-its-length.md)): the template reads `DURATION` (120 s by default) and a scenario changes it through `env`. Kazu stops a trial whose traffic is still running after 30 minutes. A fault that hasn't fired by the time traffic exits, or ended too late to watch recovery, makes the scenario *not exercised*; a longer `DURATION` fixes it.
 
 **Different traffic per scenario.** Base and head always get the same traffic for a given scenario; scenarios can differ from each other in two ways:
 - **Knobs, through `env`.** The scenario sets variables the script reads: `env: { traffic: { FLOW: browse, RATE: "50" } }`. The template's named flows make switching flow one variable.

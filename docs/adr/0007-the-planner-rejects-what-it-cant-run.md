@@ -5,7 +5,7 @@ Status: Accepted (2026-10-16)
 
 ## Context
 
-ADR-0002 decision 12 keeps no "not supported yet" list in `config`: nothing outside runs Kazu before the first public release, and before it the schema is trimmed to what's built. The 2026-10-16 foundations review found the gap that leaves in Phases 3–5: the config accepts things the runtime would silently ignore or apply wrongly, with no fact to report. A `from:` before anchor resolution makes its fault fire at traffic start; it still lands, so the landed check passes. A scenario `traffic:` override, `jitter`, `tls` and check kinds without a runner fail the same way. The shop's own configs, Kazu's test oracle, are exactly where such a silent wrong result would fool us.
+Raised by the 2026-10-16 foundations review; decided in #37. ADR-0002 decision 12 keeps no "not supported yet" list in `config`: nothing outside runs Kazu before the first public release, and before it the schema is trimmed to what's built. The 2026-10-16 foundations review found the gap that leaves in Phases 3–5: the config accepts things the runtime would silently ignore or apply wrongly, with no fact to report. A `from:` before anchor resolution makes its fault fire at traffic start; it still lands, so the landed check passes. A scenario `traffic:` override, `jitter`, `tls` and check kinds without a runner fail the same way. The shop's own configs, Kazu's test oracle, are exactly where such a silent wrong result would fool us.
 
 ## Decision
 

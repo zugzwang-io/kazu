@@ -1,7 +1,7 @@
 # ADR-0004: Faults can start relative to other faults' planned start or end
 
 Date: 2026-10-15
-Status: Accepted (2026-10-16)
+Status: Accepted (2026-10-16); amended by ADR-0006 (anchors on request-count faults resolve at run time)
 
 ## Context
 

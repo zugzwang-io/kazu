@@ -5,7 +5,7 @@ Status: Accepted (2026-10-16)
 
 ## Context
 
-DESIGN.md §11 records "Kazu computes `KAZU_DURATION` per scenario": the end of the last time-triggered fault plus the recovery window plus a margin, passed to traffic so nobody adds it up by hand. Computing it needs every fault to have a planned time. Request-count triggers have none, and with relative triggers (ADR-0004) neither does a fault anchored to one, so the computation grew special cases: a 120 s default for request-count scenarios, a proposal to forbid anchoring to a request-count fault, and a rule requiring a duration when no fault has a planned time. A fixed `duration:` per scenario was considered next, but it still makes Kazu own the workload's length.
+Raised in the review of #37 (2026-10-16). DESIGN.md §11 records "Kazu computes `KAZU_DURATION` per scenario": the end of the last time-triggered fault plus the recovery window plus a margin, passed to traffic so nobody adds it up by hand. Computing it needs every fault to have a planned time. Request-count triggers have none, and with relative triggers (ADR-0004) neither does a fault anchored to one, so the computation grew special cases: a 120 s default for request-count scenarios, a proposal to forbid anchoring to a request-count fault, and a rule requiring a duration when no fault has a planned time. A fixed `duration:` per scenario was considered next, but it still makes Kazu own the workload's length.
 
 ## Decision
 

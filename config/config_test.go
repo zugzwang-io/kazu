@@ -87,6 +87,9 @@ func TestReference(t *testing.T) {
 	if soak.Traffic == nil || !reflect.DeepEqual(soak.Traffic.Command, []string{"run", "/load/soak.js"}) || soak.Traffic.Volumes != nil {
 		t.Errorf("soak = %+v, traffic %+v", soak, soak.Traffic)
 	}
+	if want := []config.ServiceEnv{{Service: "traffic", Vars: map[string]string{"DURATION": "180s"}}}; !reflect.DeepEqual(soak.Env, want) {
+		t.Errorf("soak env = %+v, want traffic's DURATION", soak.Env)
+	}
 	rare, _ := cfg.Scenario("rare-errors")
 	if f := rare.Faults[0]; rare.NotExercised != config.Warn || f.Rate != 1 || f.Code != "UNAVAILABLE" {
 		t.Errorf("rare-errors = %+v", rare)
