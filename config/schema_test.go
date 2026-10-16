@@ -133,25 +133,25 @@ func TestSchemaRejects(t *testing.T) {
 	tests := []struct {
 		name, yaml string
 		at         string // the instance path the error names; "*" when v6.0.3 misplaces it
-		want       string // a fragment of its message; "" for any
+		want       string // a fragment of its message
 	}{
 		{"missing system", "traffic: { image: x }\n", "", "missing property 'system'"},
 		{"missing traffic", "system: docker-compose.yml\n", "", "missing property 'traffic'"},
-		{"empty system", "system: ''\ntraffic: { image: x }\n", "/system", ""},
+		{"empty system", "system: ''\ntraffic: { image: x }\n", "/system", "minLength: got 0, want 1"},
 		{"system as an empty map", "system: {}\ntraffic: { image: x }\n", "/system", "missing property 'manifests'"},
-		{"system as a number", "system: 5\ntraffic: { image: x }\n", "/system", ""},
+		{"system as a number", "system: 5\ntraffic: { image: x }\n", "/system", "got number, want string or object"},
 		{"unknown top-level key", head + "scenarioz: {}\n", "", "additional properties 'scenarioz' not allowed"},
 		{"traffic without an image", "system: x\ntraffic: { command: [run] }\n", "/traffic", "missing property 'image'"},
 		{"command as a string", head + "scenarios: { a: { traffic: { command: run /x.js } } }\n", "/scenarios/a/traffic/command", "want array"},
 		{"command with a number", head + "scenarios: { a: { traffic: { command: [run, 5] } } }\n", "/scenarios/a/traffic/command/1", "want string"},
 		{"environment list entry without =", head + "scenarios: { a: { traffic: { environment: [FLOW] } } }\n", "/scenarios/a/traffic/environment/0", "does not match pattern"},
-		{"environment value as a list", head + "scenarios: { a: { traffic: { environment: { FLOW: [a] } } } }\n", "/scenarios/a/traffic/environment/FLOW", ""},
+		{"environment value as a list", head + "scenarios: { a: { traffic: { environment: { FLOW: [a] } } } }\n", "/scenarios/a/traffic/environment/FLOW", "got array, want boolean or number or string"},
 		// Not a location: v6.0.3 reports propertyNames errors at a
 		// location that can belong to a sibling key.
 		{"edge name without an arrow", head + "edges: { checkout payments: tcp }\n", "*", "invalid propertyName 'checkout payments'"},
 		{"scenario name with a space", head + "scenarios: { bad name: {} }\n", "*", "invalid propertyName 'bad name'"},
 		{"scenario name starting with a dash", head + "scenarios: { -a: {} }\n", "*", "invalid propertyName '-a'"},
-		{"unknown protocol", head + "edges: { a -> b: udp }\n", "/edges/a -> b", ""},
+		{"unknown protocol", head + "edges: { a -> b: udp }\n", "/edges/a -> b", "value must be one of 'tcp', 'http', 'grpc'"},
 		{"tls without a key", head + "edges: { a -> b: { protocol: http, tls: { ca_cert: x } } }\n", "/edges/a -> b/tls", "missing property 'ca_key'"},
 		{"telemetry, not in the schema yet", head + "telemetry: { collector: otel }\n", "", "additional properties 'telemetry' not allowed"},
 		{"auto_scenarios, not in the schema yet", head + "auto_scenarios: true\n", "", "additional properties 'auto_scenarios' not allowed"},
@@ -159,7 +159,7 @@ func TestSchemaRejects(t *testing.T) {
 		{"gate, not in the schema yet", head + "gate: { trials: 3 }\n", "", "additional properties 'gate' not allowed"},
 
 		{"fault without a kind", fault("edge: a -> b, after: 20s"), "/scenarios/s/faults/0", "missing property 'fault'"},
-		{"unknown fault kind", fault("edge: a -> b, fault: slow"), "/scenarios/s/faults/0/fault", ""},
+		{"unknown fault kind", fault("edge: a -> b, fault: slow"), "/scenarios/s/faults/0/fault", "value must be one of 'latency', 'down'"},
 		{"fault without a target", fault("fault: down, after: 20s"), "/scenarios/s/faults/0", "'oneOf' failed"},
 		{"fault with both targets", fault("edge: a -> b, service: b, fault: down"), "/scenarios/s/faults/0", "'oneOf' failed"},
 		{"both triggers", fault("edge: a -> b, fault: down, after: 20s, after_requests: 10"), "/scenarios/s/faults/0", "'not' failed"},
@@ -185,7 +185,7 @@ func TestSchemaRejects(t *testing.T) {
 		{"from naming the same anchor twice", fault("edge: a -> b, fault: down, from: [x, x]"), "/scenarios/s/faults/0/from", "are equal"},
 		{"from a fault's end, spelled out", fault("edge: a -> b, fault: down, from: { end: x }"), "/scenarios/s/faults/0/from", "missing property 'start'"},
 		{"from a name with a space", fault("edge: a -> b, fault: down, from: slow pay"), "/scenarios/s/faults/0/from", "does not match pattern"},
-		{"from as a number", fault("edge: a -> b, fault: down, from: 5"), "/scenarios/s/faults/0/from", ""},
+		{"from as a number", fault("edge: a -> b, fault: down, from: 5"), "/scenarios/s/faults/0/from", "got number, want string or array or object"},
 
 		{"duration without a unit", fault("edge: a -> b, fault: down, after: 20"), "/scenarios/s/faults/0/after", "want string"},
 		{"duration as quoted number", fault("edge: a -> b, fault: down, after: '20'"), "/scenarios/s/faults/0/after", "does not match pattern"},
@@ -214,10 +214,10 @@ func TestSchemaRejects(t *testing.T) {
 		{"sql with expect", check("sql: { on: pg, query: x, expect: empty }"), "/checks/0/sql", "additional properties 'expect' not allowed"},
 		{"http without on", check("http: { path: /x, expect: { status: 200 } }"), "/checks/0/http", "missing property 'on'"},
 		{"http path without a slash", check("http: { on: api, path: x, expect: { status: 200 } }"), "/checks/0/http/path", "does not match pattern"},
-		{"http with an unknown method", check("http: { on: api, method: OPTIONS, path: /x, expect: { status: 200 } }"), "/checks/0/http/method", ""},
+		{"http with an unknown method", check("http: { on: api, method: OPTIONS, path: /x, expect: { status: 200 } }"), "/checks/0/http/method", "value must be one of 'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'"},
 		{"http expecting nothing", check("http: { on: api, path: /x, expect: {} }"), "/checks/0/http/expect", "minProperties"},
 		{"http status out of range", check("http: { on: api, path: /x, expect: { status: 600 } }"), "/checks/0/http/expect/status", "maximum"},
-		{"unknown measure", check("no_regression: { service: a, measure: p100, within: 1% }"), "/checks/0/no_regression/measure", ""},
+		{"unknown measure", check("no_regression: { service: a, measure: p100, within: 1% }"), "/checks/0/no_regression/measure", "value must be one of 'p50', 'p90', 'p95', 'p99', 'error_rate'"},
 		{"slo max as a word", check("slo: { service: a, measure: p99, max: fast }"), "/checks/0/slo/max", "does not match pattern"},
 		{"slo latency as a percent", check("slo: { service: a, measure: p99, max: 1% }"), "/checks/0/slo/max", "does not match pattern"},
 		{"slo error rate as a duration", check("slo: { service: a, measure: error_rate, max: 250ms }"), "/checks/0/slo/max", "does not match pattern"},
@@ -226,15 +226,18 @@ func TestSchemaRejects(t *testing.T) {
 		{"metric with within and max", check("metric: { query: up, within: 5%, max: 3 }"), "/checks/0/metric/max", "false schema"},
 		{"metric max as text", check("metric: { query: up, max: '3' }"), "/checks/0/metric/max", "want number"},
 		{"metric within in points", check("metric: { query: up, within: 1pp }"), "/checks/0/metric/within", "does not match pattern"},
-		{"unknown severity", check("metric: { query: up, max: 3, no_data: ignore }"), "/checks/0/metric/no_data", ""},
+		{"unknown severity", check("metric: { query: up, max: 3, no_data: ignore }"), "/checks/0/metric/no_data", "value must be one of 'fail', 'warn'"},
 		{"scenario check with two kinds", head + "scenarios: { s: { checks: [ { image: x, sql: { on: pg, query: x } } ] } }\n", "/scenarios/s/checks/0", "'oneOf' failed"},
 
 		{"empty suite", head + "suites: { pr: [] }\n", "/suites/pr", "minItems"},
-		{"suite as a word other than all", head + "suites: { pr: everything }\n", "/suites/pr", ""},
+		{"suite as a word other than all", head + "suites: { pr: everything }\n", "/suites/pr", "value must be 'all'"},
 	}
 	sch := compile(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.want == "" {
+				t.Fatal("no message to check: an unrelated error would pass")
+			}
 			err := validateYAML(t, sch, []byte(tt.yaml))
 			if err == nil {
 				t.Fatal("accepted")
