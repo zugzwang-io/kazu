@@ -82,6 +82,11 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 	case *kind.Maximum:
 		return "must be at most " + ratString(k.Want)
 	case *kind.UniqueItems:
+		if list := lookup(root, path, false); list != nil && list.Kind == yaml.SequenceNode {
+			if item := list.Content[k.Duplicates[0]]; item.Kind == yaml.ScalarNode {
+				return fmt.Sprintf("lists %q twice", item.Value)
+			}
+		}
 		return "lists the same value twice"
 	case *kind.MinItems, *kind.MinLength, *kind.MinProperties:
 		return "must not be empty"

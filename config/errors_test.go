@@ -107,6 +107,27 @@ func TestProblems(t *testing.T) {
 		{"from a name with a space", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: [ok, slow pay] }\n", []string{
 			`13:63: scenarios.a.faults[0].from[1]: "slow pay" is not a name (letters, digits, '.', '_' and '-')`,
 		}},
+		{"the same suite entry twice", "suites:\n  pr: [a, b, a]\n", []string{
+			`11:7: suites.pr: lists "a" twice`,
+		}},
+		{"the same anchor twice, written as a map", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: [{ start: x }, { start: x }] }\n", []string{
+			`13:58: scenarios.a.faults[0].from: lists the same value twice`,
+		}},
+		{"text where a whole number goes", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, after_requests: '200' }\n", []string{
+			`13:68: scenarios.a.faults[0].after_requests: expected a whole number, got text`,
+		}},
+		{"true or false where text goes", "checks:\n  - { sql: { on: postgres, query: true } }\n", []string{
+			`11:35: checks[0].sql.query: expected text, got true or false`,
+		}},
+		{"nothing where text goes", "checks:\n  - { image: }\n", []string{
+			`11:14: checks[0].image: expected text, got nothing`,
+		}},
+		{"bad key inside a list item", "checks:\n  - { image: x, environment: { BAD-VAR: x } }\n", []string{
+			`11:32: checks[0].environment.BAD-VAR: "BAD-VAR" is not an env var name`,
+		}},
+		{"empty key", "scenarios:\n  \"\": {}\n", []string{
+			`11:3: scenarios[""]: "" is not a name (letters, digits, '.', '_' and '-')`,
+		}},
 		{"key that is not a name", "scenarios:\n  a: { faults: [] }\n  b:\n    env:\n      checkout payments: { A: b }\n", []string{
 			`14:7: scenarios.b.env["checkout payments"]: "checkout payments" is not a name (letters, digits, '.', '_' and '-')`,
 		}},
@@ -182,6 +203,7 @@ func TestWholeFileProblems(t *testing.T) {
 		{"empty", "", "kazu.yaml: the file is empty; it needs at least system and traffic"},
 		{"missing traffic", "system: x\n", `kazu.yaml:1:1: missing key "traffic"`},
 		{"scalar root", "hello\n", "kazu.yaml:1:1: the file must be a map of keys such as system, traffic and edges"},
+		{"invalid YAML with no line", "system: \x01\n", "kazu.yaml: invalid YAML: control characters are not allowed"},
 		{"list root", "- a\n", "kazu.yaml:1:1: the file must be a map of keys such as system, traffic and edges"},
 		{"two documents", "system: x\ntraffic: { image: x }\n---\nsystem: y\n", "kazu.yaml: the file has more than one YAML document; kazu.yaml is one"},
 	}
