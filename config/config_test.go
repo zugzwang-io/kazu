@@ -235,10 +235,10 @@ func TestRejectsLossyNumbers(t *testing.T) {
 		{"duration overflow", "scenarios: { a: { faults: [ { service: payments, fault: down, after: 9999999999999h } ] } }\n", "is not a duration Kazu can hold"},
 		{"percent overflow", "checks: [ { no_regression: { service: payments, measure: p99, within: 1" + strings.Repeat("0", 400) + "% } } ]\n", "is too large a number"},
 		{"bandwidth overflow", "scenarios: { a: { faults: [ { edge: checkout -> payments, fault: bandwidth, limit: 99999999999gbps } ] } }\n", "is too large a bandwidth"},
-		{"status past int64 is still a number to the schema", "checks: [ { http: { on: postgres, path: /x, expect: { status: 18446744073709551615 } } } ]\n", "want 599"},
+		{"status past int64 is still a number to the schema", "checks: [ { http: { on: postgres, path: /x, expect: { status: 18446744073709551615 } } } ]\n", "checks[0].http.expect.status: must be at most 599"},
 		{"request count past int64", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 18446744073709551615 } ] } }\n", "18446744073709551615 is too large a number"},
-		{"infinite metric bound", "checks: [ { metric: { query: up, max: .inf } } ]\n", "line 10:39: .inf is not a finite number"},
-		{"NaN metric bound", "checks: [ { metric: { query: up, min: .NaN } } ]\n", "line 10:39: .NaN is not a finite number"},
+		{"infinite metric bound", "checks: [ { metric: { query: up, max: .inf } } ]\n", "kazu.yaml:10:39: .inf is not a finite number"},
+		{"NaN metric bound", "checks: [ { metric: { query: up, min: .NaN } } ]\n", "kazu.yaml:10:39: .NaN is not a finite number"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -246,7 +246,7 @@ func TestRejectsLossyNumbers(t *testing.T) {
 			if err == nil {
 				t.Fatal("accepted")
 			}
-			if !strings.Contains(err.Error(), tt.want) || !strings.HasPrefix(err.Error(), "kazu.yaml: ") {
+			if !strings.Contains(err.Error(), tt.want) || !strings.HasPrefix(err.Error(), "kazu.yaml:") {
 				t.Errorf("error = %v, want %q with the file name", err, tt.want)
 			}
 		})
@@ -353,8 +353,8 @@ func TestParseErrors(t *testing.T) {
 		{"empty file", "", "the file is empty"},
 		{"comments only", "# nothing\n", "the file is empty"},
 		{"second document", base + "---\nsystem: other.yml\n", "more than one YAML document"},
-		{"invalid yaml", "system: [\n", "kazu.yaml: "},
-		{"scalar root", "hello\n", "kazu.yaml: "},
+		{"invalid yaml", "system: [\n", "invalid YAML"},
+		{"scalar root", "hello\n", "the file must be a map"},
 		{"merge key that is not a map", base + "scenarios: { a: { <<: 5 } }\n", "a merge key (<<) takes a map or a list of maps"},
 		{"merge list with a non-map", base + "scenarios: { a: { <<: [5] } }\n", "a merge key (<<) takes a map or a list of maps"},
 		{"aliases that expand past the node limit", aliasBomb(9), "the file nests or repeats aliases too deeply to read"},

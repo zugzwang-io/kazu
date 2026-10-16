@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -11,23 +10,28 @@ import (
 )
 
 // flattener resolves aliases and merge keys (<<) into a plain tree, keeping
-// each node's position, so every later step sees what YAML means.
-type flattener struct{ nodes int }
+// each node's position, so every later step sees what YAML means. It records
+// problems as it goes; flatten returns nil when the tree can't be read.
+type flattener struct {
+	nodes int
+	ps    *problems
+}
 
 const (
 	maxDepth = 100
 	maxNodes = 1_000_000
 )
 
-func (f *flattener) flatten(n *yaml.Node, depth int) (*yaml.Node, error) {
+func (f *flattener) flatten(n *yaml.Node, depth int) *yaml.Node {
 	f.nodes++
 	if depth > maxDepth || f.nodes > maxNodes {
-		return nil, errors.New("the file nests or repeats aliases too deeply to read")
+		f.ps.put(Problem{Line: n.Line, Column: n.Column, Message: "the file nests or repeats aliases too deeply to read"})
+		return nil
 	}
 	switch n.Kind {
 	case yaml.DocumentNode:
 		if len(n.Content) == 0 {
-			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Line: n.Line, Column: n.Column}, nil
+			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Line: n.Line, Column: n.Column}
 		}
 		return f.flatten(n.Content[0], depth+1)
 	case yaml.AliasNode:
@@ -36,47 +40,50 @@ func (f *flattener) flatten(n *yaml.Node, depth int) (*yaml.Node, error) {
 		out := *n
 		out.Content = make([]*yaml.Node, len(n.Content))
 		for i, c := range n.Content {
-			fc, err := f.flatten(c, depth+1)
-			if err != nil {
-				return nil, err
+			fc := f.flatten(c, depth+1)
+			if fc == nil {
+				return nil
 			}
 			out.Content[i] = fc
 		}
-		return &out, nil
+		return &out
 	case yaml.MappingNode:
 		return f.mapping(n, depth)
 	case yaml.ScalarNode:
 		out := *n
-		return &out, nil
+		return &out
 	}
 	out := *n
-	return &out, nil
+	return &out
 }
 
-func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
+// mapping flattens a map. A duplicate key is recorded and the last value
+// kept, as the schema will see it; merge keys that aren't maps are fatal.
+func (f *flattener) mapping(n *yaml.Node, depth int) *yaml.Node {
 	explicit := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if k := n.Content[i]; !isMerge(k) {
-			explicit[k.Value] = true
+		k := n.Content[i]
+		if isMerge(k) {
+			continue
 		}
+		if explicit[k.Value] {
+			f.ps.put(Problem{Line: k.Line, Column: k.Column, Message: fmt.Sprintf("key %q appears twice in the same map", k.Value)})
+		}
+		explicit[k.Value] = true
 	}
 	out := *n
 	out.Content = nil
 	added := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
+		fv := f.flatten(v, depth+1)
+		if fv == nil {
+			return nil
+		}
 		if !isMerge(k) {
-			fv, err := f.flatten(v, depth+1)
-			if err != nil {
-				return nil, err
-			}
 			kc := *k
 			out.Content = append(out.Content, &kc, fv)
 			continue
-		}
-		fv, err := f.flatten(v, depth+1)
-		if err != nil {
-			return nil, err
 		}
 		var sources []*yaml.Node
 		switch fv.Kind {
@@ -85,11 +92,11 @@ func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 		case yaml.SequenceNode:
 			sources = fv.Content
 		default:
-			return nil, fmt.Errorf("line %d: a merge key (<<) takes a map or a list of maps", fv.Line)
+			return f.notAMap(fv)
 		}
 		for _, src := range sources {
 			if src.Kind != yaml.MappingNode {
-				return nil, fmt.Errorf("line %d: a merge key (<<) takes a map or a list of maps", src.Line)
+				return f.notAMap(src)
 			}
 			for j := 0; j+1 < len(src.Content); j += 2 {
 				key := src.Content[j].Value
@@ -101,7 +108,12 @@ func (f *flattener) mapping(n *yaml.Node, depth int) (*yaml.Node, error) {
 			}
 		}
 	}
-	return &out, nil
+	return &out
+}
+
+func (f *flattener) notAMap(n *yaml.Node) *yaml.Node {
+	f.ps.put(Problem{Line: n.Line, Column: n.Column, Message: "a merge key (<<) takes a map or a list of maps"})
+	return nil
 }
 
 func isMerge(k *yaml.Node) bool {
@@ -111,58 +123,50 @@ func isMerge(k *yaml.Node) bool {
 // toAny turns a flattened tree into the JSON-like values the schema
 // validator reads. Map keys are taken as written. An integer past int64
 // stays an exact number, so the schema judges its range; infinity and NaN
-// have no JSON form, so they are errors here.
-func toAny(n *yaml.Node) (any, error) {
+// have no JSON form, so they are problems here.
+func (f *flattener) toAny(n *yaml.Node) any {
 	switch n.Kind {
 	case yaml.MappingNode:
 		m := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			v, err := toAny(n.Content[i+1])
-			if err != nil {
-				return nil, err
-			}
-			m[n.Content[i].Value] = v
+			m[n.Content[i].Value] = f.toAny(n.Content[i+1])
 		}
-		return m, nil
+		return m
 	case yaml.SequenceNode:
 		s := make([]any, len(n.Content))
 		for i, c := range n.Content {
-			v, err := toAny(c)
-			if err != nil {
-				return nil, err
-			}
-			s[i] = v
+			s[i] = f.toAny(c)
 		}
-		return s, nil
+		return s
 	case yaml.ScalarNode:
 		switch n.ShortTag() {
 		case "!!null":
-			return nil, nil
+			return nil
 		case "!!bool":
 			var b bool
 			if n.Decode(&b) == nil {
-				return b, nil
+				return b
 			}
 		case "!!int":
 			var i int64
 			if n.Decode(&i) == nil {
-				return i, nil
+				return i
 			}
 			var u uint64
 			if n.Decode(&u) == nil {
-				return json.Number(strconv.FormatUint(u, 10)), nil
+				return json.Number(strconv.FormatUint(u, 10))
 			}
 		case "!!float":
-			var f float64
-			if n.Decode(&f) == nil {
-				if math.IsInf(f, 0) || math.IsNaN(f) {
-					return nil, fmt.Errorf("line %d:%d: %s is not a finite number", n.Line, n.Column, n.Value)
+			var x float64
+			if n.Decode(&x) == nil {
+				if math.IsInf(x, 0) || math.IsNaN(x) {
+					f.ps.put(Problem{Line: n.Line, Column: n.Column, Message: n.Value + " is not a finite number"})
 				}
-				return f, nil
+				return x
 			}
 		}
-		return n.Value, nil
+		return n.Value
 	default:
 	}
-	return nil, nil
+	return nil
 }

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -17,11 +16,11 @@ import (
 // values it can still reject are numbers YAML writes in a form the schema
 // can't tell apart (200.0 for an integer) or that overflow their Go type.
 type decoder struct {
-	cfg  *Config
-	errs []error
+	cfg *Config
+	ps  *problems
 }
 
-func (d *decoder) config(root *yaml.Node) (*Config, error) {
+func (d *decoder) config(root *yaml.Node) *Config {
 	d.cfg = &Config{}
 	top := fields(root)
 	if n := top["system"]; n != nil {
@@ -49,7 +48,7 @@ func (d *decoder) config(root *yaml.Node) (*Config, error) {
 		}
 		d.cfg.Suites = append(d.cfg.Suites, s)
 	}
-	return d.cfg, errors.Join(d.errs...)
+	return d.cfg
 }
 
 func (d *decoder) system(n *yaml.Node) {
@@ -269,7 +268,7 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 // zero that would read as a legitimate value.
 
 func (d *decoder) fail(n *yaml.Node, msg string) {
-	d.errs = append(d.errs, fmt.Errorf("line %d:%d: %s", n.Line, n.Column, msg))
+	d.ps.put(Problem{Line: n.Line, Column: n.Column, Message: msg})
 }
 
 // integer reads a whole number as YAML resolves it (0x10 is 16), rejecting
