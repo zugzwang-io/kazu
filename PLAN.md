@@ -60,7 +60,7 @@ The stack under review. Held until this plan's frontend sketch had been worked b
 - [x] #13 config 1/5: JSON schema for kazu.yaml — **the one to agree on**; decisions recorded in ADR-0002 and ADR-0004
 - [x] #14 config 2/5: Go types for kazu.yaml
 - [x] #15 config 3/5: decode kazu.yaml into Config
-- [~] #16 config 4/5: readable errors with positions (works around a jsonschema v6.0.3 propertyNames location bug)
+- [x] #16 config 4/5: readable errors with positions (works around a jsonschema v6.0.3 propertyNames location bug)
 - [~] #17 config 5/5: rules that relate one key to another (rejects row S3), anchor rules, and the not-supported-yet list
 
 ## Phase 3 — Walking skeleton: `kazu run` end to end (DESIGN §8 step 1)
