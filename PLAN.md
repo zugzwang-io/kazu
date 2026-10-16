@@ -110,9 +110,9 @@ Verdict and CLI:
 Shop and the e2e gate:
 
 - [ ] templates: `templates/k6/traffic.js` (DESIGN §4.3) and the shop's `load/traffic.js` edited from it
-- [~] #33 shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
-- [~] #34 shop: a test for a connection reset mid-request (→ `pending`); it found net/http silently resending a reset request, which could mark a charged order `failed` (fixed)
-- [~] #35 shop: integration tests open one pool per service with production settings and `search_path`, not one shared pool
+- [x] #33 shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
+- [x] #34 shop: a test for a connection reset mid-request (→ `pending`); it found net/http silently resending a reset request, which could mark a charged order `failed` (fixed)
+- [x] #35 shop: integration tests open one pool per service with production settings and `search_path`, not one shared pool
 - [~] #36 shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
 - [ ] shop: step-1 `kazu.yaml` with a liveness check (some order got paid, so zero-row checks can't pass on no traffic), `safety/` configs for S1–S3 and S14, `expectations.yaml` with V0, S1–S3 and S14
 - [ ] shop: `SHOP_TRAP_PAYMENTS_BY_IP`, with the plain Go test showing the alias is bypassed
