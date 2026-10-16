@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/zugzwang-io/kazu/examples/shop/internal/svc"
 )
 
 const (
@@ -118,7 +120,9 @@ func (s *Server) Settle(ctx context.Context, o Order) Order {
 	}
 	// The order must be resolved even if the caller has gone away: the charge
 	// already happened.
-	resolved, err := s.Store.Resolve(context.WithoutCancel(ctx), o.ID, to)
+	wctx, cancel := svc.Detach(ctx)
+	defer cancel()
+	resolved, err := s.Store.Resolve(wctx, o.ID, to)
 	if err != nil {
 		slog.Error("resolve order", "order", o.ID, "to", to, "err", err)
 		return o
