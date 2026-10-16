@@ -1,4 +1,4 @@
-# DESIGN.md §4.2: Priya's kazu.yaml.
+# DESIGN.md §4.2: Priya's kazu.yaml, less telemetry (ADR-0002).
 system: docker-compose.yml
 
 traffic:
@@ -14,8 +14,6 @@ edges:
 
 connections:
   postgres: postgres://postgres:dev@postgres/checkout
-
-telemetry: { collector: otel-collector }
 
 scenarios:
   slow-payments:
