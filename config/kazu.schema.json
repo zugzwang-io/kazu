@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zugzwang-io.github.io/kazu/kazu.schema.json",
   "title": "kazu.yaml",
-  "description": "Kazu configuration: the system, traffic, edges, connections, scenarios, checks and suites (DESIGN.md §4.4; telemetry, auto_scenarios, defaults and gate join as Kazu builds them, ADR-0002). The schema covers everything decidable inside one object: types, unknown keys, enums, string formats, and which fields each fault or check kind takes. Rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
+  "description": "Kazu configuration: the system, traffic, edges, connections, scenarios, checks and suites. More top-level keys join as Kazu builds them; inside each key the shape is final, and kazu rejects what it doesn't support yet. The schema covers everything decidable inside one object: types, unknown keys, enums, string formats, and which fields each fault or check kind takes. Rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
   "type": "object",
   "additionalProperties": false,
   "required": ["system", "traffic"],
   "properties": {
     "system": {
-      "description": "The system under test: a compose file, or a directory of rendered Kubernetes manifests (the Kubernetes driver arrives in v1.1; ADR-0003).",
+      "description": "The system under test: a compose file, or a directory of rendered Kubernetes manifests.",
       "type": ["string", "object"],
       "minLength": 1,
       "additionalProperties": false,
@@ -166,7 +166,7 @@
       }
     },
     "fault": {
-      "description": "One fault (DESIGN.md §4.5): exactly one target (edge or service), a kind, that kind's fields, and a trigger (after or after_requests, not both). after counts from traffic start, or from the anchors in from (ADR-0004).",
+      "description": "One fault: exactly one target (edge or service), a kind, that kind's fields, and a trigger (after or after_requests, not both). after counts from traffic start, or from the latest of the anchors in from.",
       "type": "object",
       "additionalProperties": false,
       "required": ["fault"],

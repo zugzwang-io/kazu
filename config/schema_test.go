@@ -43,7 +43,7 @@ func validateYAML(t *testing.T, sch *jsonschema.Schema, src []byte) error {
 	return sch.Validate(v)
 }
 
-// The configs in DESIGN.md and the README are valid.
+// The documented configs and the README's examples are valid.
 func TestSchemaAcceptsDocumentedConfigs(t *testing.T) {
 	sch := compile(t)
 	for _, file := range []string{"testdata/reference.yaml", "testdata/walkthrough.yaml"} {
@@ -96,8 +96,8 @@ func check(entry string) string {
 	return head + "checks: [ { " + entry + " } ]\n"
 }
 
-// Every shape the schema promises to accept, including the ADR-0002
-// proposals the documented configs don't happen to use.
+// Every shape the schema promises to accept, including the ones the
+// documented configs don't happen to use.
 func TestSchemaAccepts(t *testing.T) {
 	tests := []struct{ name, yaml string }{
 		{"system as manifests", "system: { manifests: ./k8s/rendered }\ntraffic: { image: x }\n"},

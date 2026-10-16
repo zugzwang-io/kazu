@@ -6,7 +6,7 @@ import (
 	"github.com/zugzwang-io/kazu/config"
 )
 
-// The layer table is DESIGN.md §4.5's Layer column.
+// Every fault kind has a layer: network, request or process.
 func TestFaultKindLayer(t *testing.T) {
 	want := map[config.FaultKind]config.Layer{
 		config.Latency: config.Network, config.Down: config.Network, config.Blackhole: config.Network,
