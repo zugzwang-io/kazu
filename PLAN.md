@@ -39,7 +39,8 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #25 skill-creator pass over .claude/skills/ (triggering, rationale, operational lessons)
 - [x] #26 DESIGN.md folded into the repo from the claude.ai project; 15 stale branches deleted (2026-10-15)
 - [x] #27 Platform plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch
-- [~] #28 model tiering for agent flows: reviewers on sonnet, mechanical sync on haiku, verify-foundations stays premium
+- [x] #28 model tiering for agent flows: reviewers on sonnet, mechanical sync on haiku, verify-foundations stays premium
+- [~] #29 CLAUDE.md: code never cites markdown docs (comments, docstrings, schema descriptions, fixtures)
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
@@ -54,17 +55,19 @@ The k6 template and the `PAYMENTS_BY_IP` trap were listed here but need Kazu's r
 
 ## Phase 2 — kazu.yaml config
 
-The stack under review. Held until this plan's frontend sketch had been worked backwards to the config (see "Frontend sketch", below): the screens need nothing `kazu.yaml` doesn't already carry, so [ADR-0002](docs/adr/0002-kazu-yaml-schema-shape.md) stands as proposed and the stack can be reviewed on its own merits.
+The stack under review. Held until this plan's frontend sketch had been worked backwards to the config (see "Frontend sketch", below): the screens need nothing `kazu.yaml` doesn't already carry, so [ADR-0002](docs/adr/0002-kazu-yaml-schema-shape.md) stands as proposed and the stack can be reviewed on its own merits. Reworked in review (2026-10-15): the schema drops `telemetry`, `auto_scenarios`, `defaults` and `gate` until they're built, keeps every other key at its final shape, adds scenario `checks` and relative triggers ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)), and `sql` checks pass on zero rows.
 
-- [~] #13 config 1/5: JSON schema for kazu.yaml — **the one to agree on**; decisions recorded in ADR-0002
+- [~] #13 config 1/5: JSON schema for kazu.yaml — **the one to agree on**; decisions recorded in ADR-0002 and ADR-0004
 - [~] #14 config 2/5: Go types for kazu.yaml
 - [~] #15 config 3/5: decode kazu.yaml into Config
 - [~] #16 config 4/5: readable errors with positions (works around a jsonschema v6.0.3 propertyNames location bug)
-- [~] #17 config 5/5: rules that relate one key to another (rejects row S3)
+- [~] #17 config 5/5: rules that relate one key to another (rejects row S3), anchor rules, and the not-supported-yet list
 
 ## Phase 3 — Walking skeleton: `kazu run` end to end (DESIGN §8 step 1)
 
 Done when `kazu run` drives the shop's `checkout → payments → postgres` through one scenario, base and head, and rows V0 and S1–S3 gate Kazu's own PRs. Three stacks (proxy, driver, checks) can proceed in parallel; the controller, verdict and CLI bullets join them.
+
+From here on, a bullet that builds a config feature also deletes its entry from config's not-supported-yet list (`config/supported.go`), so the config accepts exactly what runs.
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
@@ -85,10 +88,10 @@ Driver (compose):
 
 Checks:
 
-- [ ] checks 1/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback; JSON over stdio
+- [ ] checks 1/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
 - [ ] checks 2/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
 - [ ] checks 3/4: check host — runs the checks container per trial over stdio, answers `sql` through `connections:`; a check that errors on base is **incompatible with base**
-- [ ] checks 4/4: `sql:` one-line check, through the same connection path
+- [ ] checks 4/4: `sql:` one-line check, through the same connection path: passes when the query returns no rows; reads only the first few rows, under a statement timeout
 
 Verdict and CLI:
 
@@ -116,6 +119,9 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 - [ ] process faults: `crash` (kill in place, `restart_after`) and `pause`, recorded as Kazu's own so the crash default excludes them
 - [ ] checks: `@eventually(within=…)` in the SDK and the host's retry loop
 - [ ] checks: `http:` one-line check and the `http` SDK callback
+- [ ] plan: resolve fault anchors (`from`, joins) into times; config stops rejecting `from` (ADR-0004)
+- [ ] faults on a service: network faults on every declared inbound edge of the service
+- [ ] scenarios: a scenario's `traffic:` override, merged over the default traffic
 - [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan + per-trial results + proxy counters; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
 - [ ] `kazu replay <run-id> [--trial N]`
 - [ ] shop: `fraud` gRPC service, payments calls it for orders ≥ 1,000 cents (business rule 6), integration tests
@@ -129,11 +135,11 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 Done when the shop's rows gate Kazu's PRs through the same GitHub Action a customer uses, and v0.x is public.
 
 - [ ] spike → ADR: the statistical method, validated on the shop's race flag and repeated baselines — test, minimum pairs, budget, default tolerances as policy (DESIGN §8 spike, §10)
-- [ ] verdict: trial pairs — same seed, base and head back to back; fixed `gate.trials: N`; pair results in the record
+- [ ] verdict: trial pairs — same seed, base and head back to back; fixed `gate.trials: N` (adds `gate` to the schema); pair results in the record
 - [ ] verdict: paired comparison with the per-run noise estimate; **underpowered** when the budget can't resolve the tolerance
 - [ ] verdict: adaptive trials (`trials: auto`) — stop early when decided, add pairs while undecided, up to the budget
 - [ ] checks: `no_regression`, `slo`, `recovers` one-line checks over proxy measures (`p50/p90/p95/p99/error_rate`)
-- [ ] defaults: regression defaults (`latency_within`, `error_rate_within`, `recovers_within`) on user-facing edges; `defaults.off`
+- [ ] defaults: regression defaults (`latency_within`, `error_rate_within`, `recovers_within`) on user-facing edges; `defaults.off` (adds `defaults` to the schema)
 - [ ] verdict: flaky classification; `gate.fail_on`, `gate.flaky`, `gate.not_exercised`, `gate.no_data`, `gate.underpowered` honoured end to end
 - [ ] verdict: false-discovery control across many scenarios and checks
 - [ ] output: `--junit` and `--markdown` sinks from the record
@@ -153,13 +159,13 @@ Done when the shop's rows gate Kazu's PRs through the same GitHub Action a custo
 
 Done when Priya's Day 0 and Day 1 (DESIGN §3) work as written: `init`, `doctor`, a verdict from defaults alone, metric checks over her existing telemetry, three SDK languages.
 
-- [ ] telemetry 1/4: OTLP receiver (gRPC and HTTP) as a service in the trial network; `OTEL_EXPORTER_OTLP_ENDPOINT` set on every service, or `telemetry.collector` aliased to it
+- [ ] telemetry 1/4: OTLP receiver (gRPC and HTTP) as a service in the trial network; `OTEL_EXPORTER_OTLP_ENDPOINT` set on every service, or `telemetry.collector` aliased to it (adds `telemetry` to the schema)
 - [ ] telemetry 2/4: OTLP → Prometheus naming and a per-trial in-memory TSDB; proxy counters written to the same store (ADR for the name mapping, DESIGN §10)
 - [ ] telemetry 3/4: PromQL engine; `metric:` check with `max`/`min`/`within`; **no data** result and `no_data: warn`
 - [ ] telemetry 4/4: `run.metrics()` SDK callback
 - [ ] defaults: opt-in language log checks (`defaults.languages`: go, java, rust)
 - [ ] faults: `cpu`, `memory`, `disk_full`
-- [ ] scenarios: `auto_scenarios` (crash each service, take each edge down) and `auto` in suites
+- [ ] scenarios: `auto_scenarios` (crash each service, take each edge down) and `auto` in suites (adds `auto_scenarios` to the schema)
 - [ ] `kazu init`: drafts `kazu.yaml` from the compose file (candidate edges from env values, the collector it finds) and writes the k6 template
 - [ ] `kazu init --ci github`: writes the customer workflow (the e2e gate's workflow becomes its output)
 - [ ] `kazu init --ci` templates for GitLab, CircleCI, Buildkite, Jenkins
@@ -251,4 +257,4 @@ What working backwards from the screens changed or confirmed:
 - **Row S1 uses `RETRY_NEW_KEY`, a step-2 flag, but gates in Phase 3**: use any head-differs-from-base variable for S1 in Phase 3, or move S1 to Phase 4.
 - **Spikes before committing** (DESIGN §8): the verdict method before Phase 5's stats work; K3s on GitHub-hosted runners before Phase 7.
 
-Resolved since the old plan: CI on stacked PRs (#18); the nine schema proposals (ADR-0002, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14).
+Resolved since the old plan: CI on stacked PRs (#18); the schema decisions (ADR-0002's 14, plus ADR-0004's relative triggers, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14).
