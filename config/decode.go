@@ -22,10 +22,7 @@ type decoder struct {
 }
 
 func (d *decoder) config(root *yaml.Node) (*Config, error) {
-	d.cfg = &Config{
-		Defaults: Defaults{LatencyWithin: 20, ErrorRateWithin: 0.5, RecoversWithin: 60 * time.Second},
-		Gate:     Gate{FailOn: FailOnRegression, Flaky: Warn, NotExercised: Fail, NoData: Fail, Underpowered: Warn},
-	}
+	d.cfg = &Config{}
 	top := fields(root)
 	if n := top["system"]; n != nil {
 		d.system(n)
@@ -39,24 +36,9 @@ func (d *decoder) config(root *yaml.Node) (*Config, error) {
 	for _, kv := range pairs(top["connections"]) {
 		d.cfg.Connections = append(d.cfg.Connections, Connection{Name: kv.k.Value, URL: kv.v.Value})
 	}
-	if n := top["telemetry"]; n != nil {
-		if c := fields(n)["collector"]; c != nil {
-			d.cfg.Telemetry.Collector = c.Value
-		}
-	}
-	if n := top["auto_scenarios"]; n != nil {
-		d.cfg.AutoScenarios = d.boolean(n)
-	}
+	d.cfg.Checks = d.checks(top["checks"], 0)
 	for _, kv := range pairs(top["scenarios"]) {
 		d.cfg.Scenarios = append(d.cfg.Scenarios, d.scenario(kv.k.Value, kv.v))
-	}
-	if n := top["defaults"]; n != nil {
-		d.defaults(n)
-	}
-	if n := top["checks"]; n != nil {
-		for i, cn := range n.Content {
-			d.cfg.Checks = append(d.cfg.Checks, d.check(i, cn))
-		}
 	}
 	for _, kv := range pairs(top["suites"]) {
 		s := Suite{Name: kv.k.Value}
@@ -66,9 +48,6 @@ func (d *decoder) config(root *yaml.Node) (*Config, error) {
 			s.Scenarios = strs(kv.v)
 		}
 		d.cfg.Suites = append(d.cfg.Suites, s)
-	}
-	if n := top["gate"]; n != nil {
-		d.gate(n)
 	}
 	return d.cfg, errors.Join(d.errs...)
 }
@@ -128,12 +107,16 @@ func (d *decoder) scenario(name string, n *yaml.Node) Scenario {
 	if v := f["not_exercised"]; v != nil {
 		s.NotExercised = Severity(v.Value)
 	}
+	s.Checks = d.checks(f["checks"], len(d.cfg.Checks))
 	return s
 }
 
 func (d *decoder) fault(n *yaml.Node) Fault {
 	f := fields(n)
 	ft := Fault{Kind: FaultKind(f["fault"].Value)}
+	if v := f["name"]; v != nil {
+		ft.Name = v.Value
+	}
 	if v := f["edge"]; v != nil {
 		ft.Edge = canonicalEdge(v.Value)
 	}
@@ -167,41 +150,52 @@ func (d *decoder) fault(n *yaml.Node) Fault {
 	if v := f["after_requests"]; v != nil {
 		ft.AfterRequests = d.integer(v)
 	}
+	if v := f["from"]; v != nil {
+		ft.From = anchors(v)
+	}
 	if v := f["for"]; v != nil {
 		ft.For = d.duration(v)
 	}
 	return ft
 }
 
-func (d *decoder) defaults(n *yaml.Node) {
-	f := fields(n)
-	df := &d.cfg.Defaults
-	if v := f["latency_within"]; v != nil {
-		df.LatencyWithin = d.percent(v)
+// anchors reads from: one anchor, or a list of them.
+func anchors(n *yaml.Node) []Anchor {
+	if n.Kind != yaml.SequenceNode {
+		return []Anchor{anchor(n)}
 	}
-	if v := f["error_rate_within"]; v != nil {
-		df.ErrorRateWithin = PercentagePoints(d.number(v, "pp"))
+	as := make([]Anchor, 0, len(n.Content))
+	for _, a := range n.Content {
+		as = append(as, anchor(a))
 	}
-	if v := f["recovers_within"]; v != nil {
-		df.RecoversWithin = d.duration(v)
+	return as
+}
+
+func anchor(n *yaml.Node) Anchor {
+	if n.Kind == yaml.ScalarNode {
+		return Anchor{Fault: n.Value}
 	}
-	if v := f["languages"]; v != nil {
-		for _, s := range strs(v) {
-			df.Languages = append(df.Languages, Language(s))
-		}
-	}
-	if v := f["off"]; v != nil {
-		for _, s := range strs(v) {
-			df.Off = append(df.Off, DefaultCheck(s))
-		}
-	}
+	return Anchor{Fault: fields(n)["start"].Value, Start: true}
 }
 
 // checkKinds is the order kinds are looked for in a check entry.
 var checkKinds = []CheckKind{ImageCheck, SQLCheck, HTTPCheck, RecoversCheck, NoRegressionCheck, SLOCheck, MetricCheck}
 
-// check decodes the i'th entry of the checks list; the schema guarantees
-// exactly one kind key.
+// checks decodes a checks list. offset is how many checks run before it in
+// the same scenario, so default names count over the whole run list.
+func (d *decoder) checks(n *yaml.Node, offset int) []Check {
+	if n == nil {
+		return nil
+	}
+	cs := make([]Check, 0, len(n.Content))
+	for i, cn := range n.Content {
+		cs = append(cs, d.check(offset+i, cn))
+	}
+	return cs
+}
+
+// check decodes the entry at position i of its scenario's run list; the
+// schema guarantees exactly one kind key.
 func (d *decoder) check(i int, n *yaml.Node) Check {
 	f := fields(n)
 	var c Check
@@ -277,35 +271,11 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 	return c
 }
 
-func (d *decoder) gate(n *yaml.Node) {
-	f := fields(n)
-	g := &d.cfg.Gate
-	if v := f["fail_on"]; v != nil {
-		g.FailOn = FailOn(v.Value)
-	}
-	if v := f["trials"]; v != nil && v.Value != "auto" {
-		g.Trials = d.integer(v)
-	}
-	for key, dst := range map[string]*Severity{"flaky": &g.Flaky, "not_exercised": &g.NotExercised, "no_data": &g.NoData, "underpowered": &g.Underpowered} {
-		if v := f[key]; v != nil {
-			*dst = Severity(v.Value)
-		}
-	}
-}
-
 // Scalar readers. Each records a problem at the node instead of returning a
 // zero that would read as a legitimate value.
 
 func (d *decoder) fail(n *yaml.Node, msg string) {
 	d.errs = append(d.errs, fmt.Errorf("line %d:%d: %s", n.Line, n.Column, msg))
-}
-
-func (d *decoder) boolean(n *yaml.Node) bool {
-	var b bool
-	if err := n.Decode(&b); err != nil {
-		d.fail(n, "expected true or false, got "+n.Value)
-	}
-	return b
 }
 
 // integer reads a whole number as YAML resolves it (0x10 is 16), rejecting
