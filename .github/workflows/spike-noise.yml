@@ -7,24 +7,26 @@ on:
 
 jobs:
   noise:
+    name: noise (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        runner: [1, 2, 3]
+        include:
+          - { label: rate50-pause, rate: "50", fault: "1" }
+          - { label: rate150-pause, rate: "150", fault: "1" }
+          - { label: rate150-nofault, rate: "150", fault: "0" }
     steps:
       - uses: actions/checkout@v4
       - name: Run shop N times
-        env: { N: "20", RATE: "50", DURATION: 60s, OUT: out }
+        env: { N: "20", RATE: "${{ matrix.rate }}", FAULT: "${{ matrix.fault }}", DURATION: 60s, OUT: out }
         run: spikes/noise/run.sh
       - name: Analyze
         if: always()
-        run: |
-          echo "## Runner ${{ matrix.runner }}" >> "$GITHUB_STEP_SUMMARY"
-          python3 spikes/noise/analyze.py out out/noise.json | tee -a "$GITHUB_STEP_SUMMARY"
+        run: python3 spikes/noise/analyze.py out "${{ matrix.label }}" out/noise.json | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: noise-${{ matrix.runner }}
+          name: noise-${{ matrix.label }}
           path: out/

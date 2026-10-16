@@ -1,0 +1,4 @@
+# Spike only: a near-instant processor so the shop's own work dominates latency.
+services:
+  fakestripe:
+    environment: { LATENCY: 5ms, JITTER: 2ms }

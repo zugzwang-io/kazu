@@ -1,107 +1,128 @@
-"""Summarise run-to-run noise from run.sh output.
+"""Summarise run-to-run noise from one run.sh output directory (one condition).
 
-Runs (1,2), (3,4), ... are treated as base/head pairs of identical code.
-Latency diffs are relative ((head-base)/base); error-rate diffs are absolute,
-in percentage points. Prints Markdown to stdout and writes JSON.
+Each request is bucketed by its start time into a window relative to the
+fault: before, during, after (plus all). Per window: p99 latency, HTTP error
+rate (k6 http_req_failed) and unpaid-order rate (POST /orders not answered
+with a paid order). Runs (1,2), (3,4), ... are base/head pairs of identical
+code; latency and request-count diffs are relative ((head-base)/base), rate
+diffs are absolute percentage points. Prints Markdown, writes JSON.
 
-Usage: python3 analyze.py OUT_DIR [JSON_PATH]
+Usage: python3 analyze.py OUT_DIR [LABEL] [JSON_PATH]
 """
 
+import gzip
 import json
 import pathlib
 import statistics
 import sys
 
-LATENCY = ["p50_ms", "p95_ms", "p99_ms"]
+WINDOWS = ["all", "before", "during", "after"]
 
 
-def load(out):
-    runs = []
-    for i in range(1, 10_000):
-        summary = out / f"run-{i}.json"
-        if not summary.exists():
-            break
-        m = json.loads(summary.read_text())["metrics"]
-        d = m["http_req_duration"]
-        wall = json.loads((out / f"wall-{i}.json").read_text())
-        runs.append({
-            "run": i,
-            "p50_ms": d["p(50)"],
-            "p95_ms": d["p(95)"],
-            "p99_ms": d["p(99)"],
-            "requests": m["http_reqs"]["count"],
-            "error_pct": 100 * m["http_req_failed"]["value"],
-            "wall_s": wall["wall_s"],
-            "k6_s": wall["k6_s"],
-        })
-    return runs
+def quantile(values, q):
+    if len(values) < 2:
+        return values[0] if values else None
+    return statistics.quantiles(values, n=100, method="inclusive")[q - 1]
 
 
-def pct(values, q):
-    s = sorted(values)
-    return s[min(len(s) - 1, int(q * len(s)))]
+def window(start, t):
+    if start < t["fault_start"]:
+        return "before"
+    return "during" if start < t["fault_end"] else "after"
+
+
+def load_run(out, i):
+    t = json.loads((out / f"run-{i}.json").read_text())
+    dur = {w: [] for w in WINDOWS}
+    failed = {w: [] for w in WINDOWS}
+    unpaid = {w: [] for w in WINDOWS}
+    series = {"http_req_duration": dur, "http_req_failed": failed, "order_unpaid": unpaid}
+    with gzip.open(out / f"raw-{i}.json.gz", "rt") as f:
+        for line in f:
+            p = json.loads(line)
+            if p["type"] != "Point" or p["metric"] not in series:
+                continue
+            start = int(p["data"]["tags"]["start"]) / 1000
+            for w in ("all", window(start, t)):
+                series[p["metric"]][w].append(p["data"]["value"])
+    row = {"run": i, "all.p50_ms": quantile(dur["all"], 50), "all.p95_ms": quantile(dur["all"], 95),
+           "all.requests": len(dur["all"])}
+    for w in WINDOWS:
+        row[f"{w}.p99_ms"] = quantile(dur[w], 99)
+        row[f"{w}.http_err_pct"] = 100 * statistics.fmean(failed[w]) if failed[w] else None
+        row[f"{w}.unpaid_pct"] = 100 * statistics.fmean(unpaid[w]) if unpaid[w] else None
+    row["k6_s"] = round(t["k6_end"] - t["k6_start"], 1)
+    return row
+
+
+def metric_keys():
+    keys = ["all.p50_ms", "all.p95_ms", "all.requests"]
+    for w in WINDOWS:
+        keys += [f"{w}.p99_ms", f"{w}.http_err_pct", f"{w}.unpaid_pct"]
+    return keys
+
+
+def diff(key, a, b):
+    if a is None or b is None:
+        return None
+    if key.endswith("_pct"):
+        return b - a
+    return (b - a) / a if a else None
 
 
 def analyze(runs):
     pairs = [(runs[k], runs[k + 1]) for k in range(0, len(runs) - 1, 2)]
-    result = {"runs": runs, "pairs": [], "summary": {}}
+    res = {"runs": runs, "pairs": [], "summary": {}}
     for a, b in pairs:
-        diff = {f"{x}_rel": (b[x] - a[x]) / a[x] if a[x] else None for x in LATENCY}
-        diff["error_pp"] = b["error_pct"] - a["error_pct"]
-        result["pairs"].append({"base": a["run"], "head": b["run"], **diff})
-    for key in [f"{x}_rel" for x in LATENCY] + ["error_pp"]:
-        absd = [abs(p[key]) for p in result["pairs"] if p[key] is not None]
-        result["summary"][key] = {
-            "median_abs": statistics.median(absd) if absd else None,
-            "p90_abs": pct(absd, 0.9) if absd else None,
-            "max_abs": max(absd) if absd else None,
-        }
-    for key in LATENCY + ["error_pct", "requests"]:
-        vals = [r[key] for r in runs]
-        mean = statistics.fmean(vals)
+        res["pairs"].append({"base": a["run"], "head": b["run"],
+                             **{k: diff(k, a[k], b[k]) for k in metric_keys()}})
+    for k in metric_keys():
+        absd = sorted(abs(p[k]) for p in res["pairs"] if p[k] is not None)
+        vals = [r[k] for r in runs if r[k] is not None]
+        mean = statistics.fmean(vals) if vals else None
         cv = statistics.stdev(vals) / mean if len(vals) > 1 and mean else None
-        result["summary"][key] = {"mean": mean, "cv": cv}
-    return result
+        res["summary"][k] = {
+            "mean": mean, "cv": cv,
+            "median_abs_diff": statistics.median(absd) if absd else None,
+            "p90_abs_diff": absd[min(len(absd) - 1, int(0.9 * len(absd)))] if absd else None,
+            "max_abs_diff": absd[-1] if absd else None,
+        }
+    return res
 
 
 def fmt(v, spec):
     return "n/a" if v is None else format(v, spec)
 
 
-def markdown(res):
-    out = ["### Per run", "", "| run | p50 ms | p95 ms | p99 ms | requests | error % | wall s | k6 s |",
-           "|---|---|---|---|---|---|---|---|"]
+def markdown(res, label):
+    cols = ["all.p50_ms", "all.p95_ms"] + [f"{w}.p99_ms" for w in WINDOWS] \
+        + [f"{w}.unpaid_pct" for w in WINDOWS] + [f"{w}.http_err_pct" for w in WINDOWS]
+    out = [f"## {label}", "", "### Per run", "",
+           "| run | requests | k6 s | " + " | ".join(cols) + " |", "|---" * (len(cols) + 3) + "|"]
     for r in res["runs"]:
-        out.append(f"| {r['run']} | {r['p50_ms']:.2f} | {r['p95_ms']:.2f} | {r['p99_ms']:.2f} | "
-                   f"{r['requests']} | {r['error_pct']:.3f} | {r['wall_s']} | {r['k6_s']} |")
-    out += ["", "### Per pair (head vs base)", "", "| base | head | p50 Δ | p95 Δ | p99 Δ | error Δ pp |",
-            "|---|---|---|---|---|---|"]
-    for p in res["pairs"]:
-        out.append(f"| {p['base']} | {p['head']} | {fmt(p['p50_ms_rel'], '+.1%')} | "
-                   f"{fmt(p['p95_ms_rel'], '+.1%')} | {fmt(p['p99_ms_rel'], '+.1%')} | {p['error_pp']:+.3f} |")
-    s = res["summary"]
-    out += ["", "### |diff| across pairs", "", "| metric | median | p90 | max |", "|---|---|---|---|"]
-    for key in [f"{x}_rel" for x in LATENCY]:
-        out.append(f"| {key} | {fmt(s[key]['median_abs'], '.1%')} | {fmt(s[key]['p90_abs'], '.1%')} | "
-                   f"{fmt(s[key]['max_abs'], '.1%')} |")
-    e = s["error_pp"]
-    out.append(f"| error_pp | {fmt(e['median_abs'], '.3f')} | {fmt(e['p90_abs'], '.3f')} | "
-               f"{fmt(e['max_abs'], '.3f')} |")
-    out += ["", "### Across all runs", "", "| metric | mean | CV |", "|---|---|---|"]
-    for key in LATENCY + ["error_pct", "requests"]:
-        out.append(f"| {key} | {s[key]['mean']:.3f} | {fmt(s[key]['cv'], '.1%')} |")
+        out.append(f"| {r['run']} | {r['all.requests']} | {r['k6_s']} | "
+                   + " | ".join(fmt(r[c], ".2f") for c in cols) + " |")
+    out += ["", "### Noise (diffs over base/head pairs; latency and requests relative, rates in pp)", "",
+            "| metric | mean | CV | median \\|diff\\| | p90 \\|diff\\| | max \\|diff\\| |", "|---|---|---|---|---|---|"]
+    for k, s in res["summary"].items():
+        spec = ".2f" if k.endswith("_pct") else ".1%"
+        out.append(f"| {k} | {fmt(s['mean'], '.2f')} | {fmt(s['cv'], '.1%')} | {fmt(s['median_abs_diff'], spec)} | "
+                   f"{fmt(s['p90_abs_diff'], spec)} | {fmt(s['max_abs_diff'], spec)} |")
     return "\n".join(out)
 
 
 def main():
     out = pathlib.Path(sys.argv[1])
-    json_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else out / "noise.json"
-    runs = load(out)
-    if not runs:
+    label = sys.argv[2] if len(sys.argv) > 2 else out.name
+    json_path = pathlib.Path(sys.argv[3]) if len(sys.argv) > 3 else out / "noise.json"
+    n = 0
+    while (out / f"run-{n + 1}.json").exists():
+        n += 1
+    if not n:
         sys.exit(f"no run-*.json in {out}")
-    res = analyze(runs)
-    json_path.write_text(json.dumps(res, indent=2))
-    print(markdown(res))
+    res = analyze([load_run(out, i) for i in range(1, n + 1)])
+    json_path.write_text(json.dumps({"label": label, **res}, indent=2))
+    print(markdown(res, label))
 
 
 if __name__ == "__main__":

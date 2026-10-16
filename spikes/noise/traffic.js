@@ -1,22 +1,24 @@
 // Noise-spike load: constant arrival rate, weighted checkout/browse mix,
 // seeded so every run sends the same sequence. Never judges responses.
+// Every sample is tagged with its request's start time (epoch ms) so the
+// analysis can bucket requests into fault windows exactly.
 import http from 'k6/http';
 import exec from 'k6/execution';
+import { Rate } from 'k6/metrics';
 
 const BASE = __ENV.CHECKOUT_URL || 'http://checkout:8080';
 const SEED = parseInt(__ENV.SEED || '1', 10);
-const params = { timeout: '10s' };
+const orderUnpaid = new Rate('order_unpaid');
 
 export const options = {
-  summaryTrendStats: ['avg', 'min', 'max', 'p(50)', 'p(95)', 'p(99)'],
   scenarios: {
     load: {
       executor: 'constant-arrival-rate',
       rate: parseInt(__ENV.RATE || '50', 10),
       timeUnit: '1s',
       duration: __ENV.DURATION || '60s',
-      preAllocatedVUs: 50,
-      maxVUs: 500,
+      preAllocatedVUs: 100,
+      maxVUs: 1500,
     },
   },
 };
@@ -41,18 +43,23 @@ function amount(r) {
   return 100001 + Math.floor(r() * 100000);
 }
 
+function opts(name, extra = {}) {
+  return { timeout: '10s', ...extra, tags: { name, start: String(Date.now()) } };
+}
+
 export default function () {
   const i = exec.scenario.iterationInTest;
   const r = rng(SEED * 1000003 + i);
   if (r() < 0.7) {
-    const res = http.post(`${BASE}/orders`, JSON.stringify({ amount_cents: amount(r) }), {
-      ...params,
+    const o = opts('POST /orders', {
       headers: { 'Idempotency-Key': `noise-${SEED}-${i}`, 'Content-Type': 'application/json' },
-      tags: { name: 'POST /orders' },
     });
-    const id = res.status >= 200 && res.status < 300 && res.json('id');
-    if (id) http.get(`${BASE}/orders/${id}`, { ...params, tags: { name: 'GET /orders/{id}' } });
+    const res = http.post(`${BASE}/orders`, JSON.stringify({ amount_cents: amount(r) }), o);
+    const ok = res.status >= 200 && res.status < 300;
+    // Anything but an order that is paid now: pending (202), failed, or an HTTP error.
+    orderUnpaid.add(!(ok && res.json('status') === 'paid'), o.tags);
+    if (ok) http.get(`${BASE}/orders/${res.json('id')}`, opts('GET /orders/{id}'));
   } else {
-    http.get(`${BASE}/orders?status=paid`, { ...params, tags: { name: 'GET /orders?status=paid' } });
+    http.get(`${BASE}/orders?status=paid`, opts('GET /orders?status=paid'));
   }
 }
