@@ -100,6 +100,46 @@ func (f *fakePayer) Charge(_ context.Context, o Order) Outcome {
 func (f *fakePayer) set(o Outcome) { f.mu.Lock(); f.outcome = o; f.mu.Unlock() }
 func (f *fakePayer) count() int    { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
 
+// ctxStore records the state of the context an order was resolved with.
+type ctxStore struct {
+	*memStore
+	err         error
+	hasDeadline bool
+}
+
+func (c *ctxStore) Resolve(ctx context.Context, id, status string) (Order, error) {
+	_, c.hasDeadline = ctx.Deadline()
+	c.err = ctx.Err()
+	return c.memStore.Resolve(ctx, id, status)
+}
+
+// cancellingPayer pays, then cancels the caller's request.
+type cancellingPayer struct{ cancel context.CancelFunc }
+
+func (p cancellingPayer) Charge(context.Context, Order) Outcome {
+	p.cancel()
+	return OutcomePaid
+}
+
+func TestOrderIsResolvedAfterTheCallerGivesUpButNotForever(t *testing.T) {
+	store := &ctxStore{memStore: newMemStore()}
+	ctx, cancel := context.WithCancel(context.Background())
+	o, err := store.CreateOrGet(ctx, "k", 1500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Store: store, Pay: cancellingPayer{cancel}}
+	if got := s.Settle(ctx, o); got.Status != StatusPaid {
+		t.Fatalf("status %q, want paid", got.Status)
+	}
+	if store.err != nil {
+		t.Fatal("the order was resolved on the caller's cancelled context")
+	}
+	if !store.hasDeadline {
+		t.Fatal("the order was resolved with no deadline; a database that stops answering would hold it forever")
+	}
+}
+
 func post(t *testing.T, h http.Handler, key, body string) (*httptest.ResponseRecorder, Order) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/orders", strings.NewReader(body))

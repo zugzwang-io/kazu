@@ -318,7 +318,7 @@ Every config includes a liveness check (`select 'no paid orders' where not exist
 Choices that matter to a bug, recorded as the code makes them.
 
 - **Payments follows the caller's context while charging.** If checkout gives up, payments' call to fakestripe is cancelled, like any Go handler using the request context. Fakestripe still charges (a real processor doesn't notice the caller leaving), so the charge exists at the processor with no row yet; the retry with the same key gets the same processor charge back and records it.
-- **The charge row is written after the processor call**, under the advisory lock, on a context detached from the caller: once money has moved it is recorded even if the caller has gone.
+- **The charge row is written after the processor call**, under the advisory lock, on a context detached from the caller: once money has moved it is recorded even if the caller has gone. The detached write still has a 5 s deadline, longer than the statement timeout, so a database that stops answering can't hold it, and the request slot behind it, until TCP gives up.
 - **Checkout resolves an order on a detached context** for the same reason: a paid order is marked paid even if the client hung up.
 - **After retries run out, an order whose outcome is unknown stays `pending`** and the reconciler retries it with the same key every 5 s; there is no terminal "unknown" state. Orders whose every attempt was refused or shed fail.
 

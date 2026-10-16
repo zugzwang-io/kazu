@@ -80,6 +80,44 @@ func TestChargeOncePerKey(t *testing.T) {
 	}
 }
 
+// ctxStore records the state of the context a charge was written with.
+type ctxStore struct {
+	memStore
+	wrote       bool
+	err         error
+	hasDeadline bool
+}
+
+func (c *ctxStore) InsertOnce(ctx context.Context, ch Charge) (Charge, error) {
+	_, c.hasDeadline = ctx.Deadline()
+	c.wrote, c.err = true, ctx.Err()
+	return c.memStore.InsertOnce(ctx, ch)
+}
+
+// cancellingProcessor charges, then cancels the caller's request, as a client
+// that gave up while the processor was working would.
+type cancellingProcessor struct{ cancel context.CancelFunc }
+
+func (p cancellingProcessor) Charge(_ context.Context, key string, _ int64) (string, error) {
+	p.cancel()
+	return "ch_" + key, nil
+}
+
+func TestChargeIsRecordedAfterTheCallerGivesUpButNotForever(t *testing.T) {
+	store := &ctxStore{}
+	reqCtx, cancel := context.WithCancel(context.Background())
+	h := NewServer(store, cancellingProcessor{cancel}, 20, nil).Handler()
+	req := httptest.NewRequestWithContext(reqCtx, http.MethodPost, "/charges", strings.NewReader(body))
+	req.Header.Set("Idempotency-Key", "k")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !store.wrote || store.err != nil {
+		t.Fatalf("the charge row was written on the caller's cancelled context (wrote %v, err %v)", store.wrote, store.err)
+	}
+	if !store.hasDeadline {
+		t.Fatal("the charge row was written with no deadline; a database that stops answering would hold it forever")
+	}
+}
+
 func TestProcessorFailureRecordsNothing(t *testing.T) {
 	store := &memStore{}
 	h := NewServer(store, &fakeProcessor{err: errors.New("boom")}, 20, nil).Handler()
