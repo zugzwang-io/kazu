@@ -15,7 +15,7 @@ func TestDetachOutlivesTheCallerButNotForever(t *testing.T) {
 		t.Fatalf("detached context ended with its caller: %v", err)
 	}
 	dl, ok := ctx.Deadline()
-	if !ok || time.Until(dl) > DetachTimeout {
-		t.Fatalf("deadline %v, %v; want one within %v", dl, ok, DetachTimeout)
+	if left := time.Until(dl); !ok || left > DetachTimeout || left < DetachTimeout/2 {
+		t.Fatalf("deadline %v away (set: %v); want about %v", left, ok, DetachTimeout)
 	}
 }
