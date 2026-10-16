@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/zugzwang-io/kazu/examples/shop/internal/svc"
 )
 
 const (
@@ -58,15 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /orders", s.createOrder)
 	mux.HandleFunc("GET /orders/{id}", s.getOrder)
 	mux.HandleFunc("GET /orders", s.listOrders)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if s.Ready != nil {
-			if err := s.Ready(r.Context()); err != nil {
-				http.Error(w, err.Error(), http.StatusServiceUnavailable)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("GET /healthz", svc.Healthz(s.Ready))
 	return mux
 }
 
@@ -99,7 +93,7 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 	if o.Status == StatusPending {
 		code = http.StatusAccepted // the reconciler will finish it
 	}
-	writeJSON(w, code, o)
+	svc.WriteJSON(w, code, o)
 }
 
 // Settle charges a pending order and records the outcome. Paid and declined
@@ -114,6 +108,7 @@ func (s *Server) Settle(ctx context.Context, o Order) Order {
 	case OutcomeDeclined:
 		to = StatusFailed
 	default:
+		slog.Warn("charge outcome unknown; order stays pending for the reconciler", "order", o.ID)
 		return o
 	}
 	// The order must be resolved even if the caller has gone away: the charge
@@ -132,19 +127,21 @@ func (s *Server) getOrder(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNotFound):
 		http.NotFound(w, r)
 	case err != nil:
+		slog.Error("read order", "order", r.PathValue("id"), "err", err)
 		http.Error(w, "could not read order", http.StatusServiceUnavailable)
 	default:
-		writeJSON(w, http.StatusOK, o)
+		svc.WriteJSON(w, http.StatusOK, o)
 	}
 }
 
 func (s *Server) listOrders(w http.ResponseWriter, r *http.Request) {
 	orders, err := s.Store.List(r.Context(), r.URL.Query().Get("status"), 100)
 	if err != nil {
+		slog.Error("list orders", "err", err)
 		http.Error(w, "could not list orders", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusOK, orders)
+	svc.WriteJSON(w, http.StatusOK, orders)
 }
 
 // Reconcile re-sends orders that have been pending for longer than age, every
@@ -181,10 +178,4 @@ func (s *Server) ReconcileOnce(ctx context.Context, age time.Duration, workers i
 	}
 	wg.Wait()
 	return len(orders)
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
 }
