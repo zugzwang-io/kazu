@@ -35,7 +35,9 @@ var defaults = config{attemptTimeout: time.Second, maxInFlight: 20}
 // shop is the three services wired together:
 // test → checkout → payments → fakestripe, with Postgres behind both.
 type shop struct {
-	db          *db.DB
+	db          *db.DB // sees every schema; for the test's own queries
+	checkoutDB  *db.DB
+	paymentsDB  *db.DB
 	stripe      *fakestripe.Server
 	stripeDown  atomic.Bool // when set, the processor answers 500 to everything
 	paymentsURL string
@@ -49,6 +51,8 @@ func start(t *testing.T, cfg config) *shop {
 		db:     dbtest.Open(t, "payments", "checkout"),
 		stripe: &fakestripe.Server{Latency: 50 * time.Millisecond, Jitter: 10 * time.Millisecond},
 	}
+	s.checkoutDB = dbtest.Connect(t, s.db, "checkout")
+	s.paymentsDB = dbtest.Connect(t, s.db, "payments")
 
 	stripe := s.stripe.Handler()
 	stripeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +65,7 @@ func start(t *testing.T, cfg config) *shop {
 	t.Cleanup(stripeSrv.Close)
 
 	proc := &payments.StripeClient{URL: stripeSrv.URL, HTTP: &http.Client{}, Timeout: 2 * time.Second}
-	paymentsSrv := httptest.NewServer(payments.NewServer(payments.PGStore{DB: s.db}, proc, cfg.maxInFlight, s.db.Ping).Handler())
+	paymentsSrv := httptest.NewServer(payments.NewServer(payments.PGStore{DB: s.paymentsDB}, proc, cfg.maxInFlight, s.paymentsDB.Ping).Handler())
 	t.Cleanup(paymentsSrv.Close)
 	s.paymentsURL = paymentsSrv.URL
 
@@ -73,7 +77,7 @@ func start(t *testing.T, cfg config) *shop {
 func (s *shop) newCheckout(t *testing.T, paymentsURL string, attemptTimeout time.Duration) (*checkout.Server, string) {
 	t.Helper()
 	c := &checkout.Server{
-		Store: checkout.PGStore{DB: s.db},
+		Store: checkout.PGStore{DB: s.checkoutDB},
 		Pay: &checkout.PaymentsClient{URL: paymentsURL, HTTP: &http.Client{},
 			AttemptTimeout: attemptTimeout, MaxAttempts: 3, BaseBackoff: 10 * time.Millisecond},
 	}

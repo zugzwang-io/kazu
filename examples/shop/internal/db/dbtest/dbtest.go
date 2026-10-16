@@ -109,3 +109,17 @@ func Open(t testing.TB, services ...string) *db.DB {
 	}
 	return d
 }
+
+// Connect opens another pool on base's database: the service's production
+// pool on its own schema, so a test runs the pool the service runs and an
+// unqualified query naming another service's table fails as it would in
+// production.
+func Connect(t testing.TB, base *db.DB, schema string) *db.DB {
+	t.Helper()
+	d, err := db.Open(context.Background(), db.ServiceConfig(base.Pool.Config().ConnString(), schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Pool.Close)
+	return d
+}

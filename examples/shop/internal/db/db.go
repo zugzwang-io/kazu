@@ -12,10 +12,17 @@ import (
 
 type Config struct {
 	URL              string
-	Schema           string        // the service's Postgres schema; sets search_path
-	PoolSize         int           // 10
-	AcquireTimeout   time.Duration // 500ms
-	StatementTimeout time.Duration // 2s
+	Schema           string // the service's Postgres schema; sets search_path
+	PoolSize         int
+	AcquireTimeout   time.Duration
+	StatementTimeout time.Duration
+}
+
+// ServiceConfig is a service's production pool on its own schema; services
+// override it from env vars, and tests use it as is so they run the pool
+// the services run.
+func ServiceConfig(url, schema string) Config {
+	return Config{URL: url, Schema: schema, PoolSize: 10, AcquireTimeout: 500 * time.Millisecond, StatementTimeout: 2 * time.Second}
 }
 
 // DB is a pgx pool plus the acquire timeout every query waits at most:

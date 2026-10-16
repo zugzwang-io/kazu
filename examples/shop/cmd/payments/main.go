@@ -13,13 +13,11 @@ import (
 )
 
 func main() {
-	d, err := db.Open(context.Background(), db.Config{
-		URL:              svc.Env("DATABASE_URL", "postgres://postgres:dev@postgres:5432/shop"),
-		Schema:           "payments",
-		PoolSize:         svc.EnvInt("DB_POOL_SIZE", 10),
-		AcquireTimeout:   svc.EnvDuration("DB_ACQUIRE_TIMEOUT", 500*time.Millisecond),
-		StatementTimeout: svc.EnvDuration("DB_STATEMENT_TIMEOUT", 2*time.Second),
-	})
+	cfg := db.ServiceConfig(svc.Env("DATABASE_URL", "postgres://postgres:dev@postgres:5432/shop"), "payments")
+	cfg.PoolSize = svc.EnvInt("DB_POOL_SIZE", cfg.PoolSize)
+	cfg.AcquireTimeout = svc.EnvDuration("DB_ACQUIRE_TIMEOUT", cfg.AcquireTimeout)
+	cfg.StatementTimeout = svc.EnvDuration("DB_STATEMENT_TIMEOUT", cfg.StatementTimeout)
+	d, err := db.Open(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("database config: %v", err)
 	}
