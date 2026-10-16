@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"syscall"
@@ -41,10 +42,10 @@ type PaymentsClient struct {
 type attemptResult int
 
 const (
-	resultPaid         attemptResult = iota
-	resultDeclined                   // 4xx: retrying won't change the answer
-	resultNotProcessed               // refused or shed (503): safe to retry, nothing happened
-	resultAmbiguous                  // timeout, reset, other 5xx: may have charged
+	resultAmbiguous attemptResult = iota // timeout, reset, other 5xx: may have charged; the zero value, so an unset result never reads as paid
+	resultPaid
+	resultDeclined     // 4xx: retrying won't change the answer
+	resultNotProcessed // refused or shed (503): safe to retry, nothing happened
 )
 
 var errRetry = errors.New("retry")
@@ -87,6 +88,7 @@ func (p *PaymentsClient) attempt(ctx context.Context, o Order) attemptResult {
 	body, _ := json.Marshal(map[string]any{"order_id": o.ID, "amount_cents": o.AmountCents})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.URL+"/charges", bytes.NewReader(body))
 	if err != nil {
+		slog.Error("payments request", "order", o.ID, "url", p.URL, "err", err)
 		return resultDeclined
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -98,6 +100,7 @@ func (p *PaymentsClient) attempt(ctx context.Context, o Order) attemptResult {
 
 	resp, err := p.HTTP.Do(req)
 	if err != nil {
+		slog.Warn("payments attempt", "order", o.ID, "err", err)
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			return resultNotProcessed
 		}
@@ -106,9 +109,11 @@ func (p *PaymentsClient) attempt(ctx context.Context, o Order) attemptResult {
 	// Read the body to the end so the connection goes back into the pool.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	switch {
-	case resp.StatusCode/100 == 2:
+	if resp.StatusCode/100 == 2 {
 		return resultPaid
+	}
+	slog.Warn("payments attempt", "order", o.ID, "status", resp.StatusCode)
+	switch {
 	case resp.StatusCode == http.StatusServiceUnavailable:
 		return resultNotProcessed // payments sheds before doing any work
 	case resp.StatusCode/100 == 4:

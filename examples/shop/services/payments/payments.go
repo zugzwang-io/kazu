@@ -54,15 +54,7 @@ func NewServer(store Store, proc Processor, maxInFlight int, ready func(context.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /charges", s.charge)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if s.Ready != nil {
-			if err := s.Ready(r.Context()); err != nil {
-				http.Error(w, err.Error(), http.StatusServiceUnavailable)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("GET /healthz", svc.Healthz(s.Ready))
 	return mux
 }
 
@@ -89,7 +81,7 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 	existing, err := s.Store.Find(ctx, key)
 	switch {
 	case err == nil:
-		writeJSON(w, existing)
+		svc.WriteJSON(w, http.StatusOK, existing)
 		return
 	case !errors.Is(err, ErrNotFound):
 		slog.Error("find charge", "key", key, "err", err)
@@ -114,12 +106,7 @@ func (s *Server) charge(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, c)
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	svc.WriteJSON(w, http.StatusOK, c)
 }
 
 // StripeClient calls the processor's POST /v1/charges.
