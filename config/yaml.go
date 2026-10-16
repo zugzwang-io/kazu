@@ -1,8 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -106,43 +109,60 @@ func isMerge(k *yaml.Node) bool {
 }
 
 // toAny turns a flattened tree into the JSON-like values the schema
-// validator reads. Map keys are taken as written.
-func toAny(n *yaml.Node) any {
+// validator reads. Map keys are taken as written. An integer past int64
+// stays an exact number, so the schema judges its range; infinity and NaN
+// have no JSON form, so they are errors here.
+func toAny(n *yaml.Node) (any, error) {
 	switch n.Kind {
 	case yaml.MappingNode:
 		m := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			m[n.Content[i].Value] = toAny(n.Content[i+1])
+			v, err := toAny(n.Content[i+1])
+			if err != nil {
+				return nil, err
+			}
+			m[n.Content[i].Value] = v
 		}
-		return m
+		return m, nil
 	case yaml.SequenceNode:
 		s := make([]any, len(n.Content))
 		for i, c := range n.Content {
-			s[i] = toAny(c)
+			v, err := toAny(c)
+			if err != nil {
+				return nil, err
+			}
+			s[i] = v
 		}
-		return s
+		return s, nil
 	case yaml.ScalarNode:
 		switch n.ShortTag() {
 		case "!!null":
-			return nil
+			return nil, nil
 		case "!!bool":
 			var b bool
 			if n.Decode(&b) == nil {
-				return b
+				return b, nil
 			}
 		case "!!int":
 			var i int64
 			if n.Decode(&i) == nil {
-				return i
+				return i, nil
+			}
+			var u uint64
+			if n.Decode(&u) == nil {
+				return json.Number(strconv.FormatUint(u, 10)), nil
 			}
 		case "!!float":
 			var f float64
 			if n.Decode(&f) == nil {
-				return f
+				if math.IsInf(f, 0) || math.IsNaN(f) {
+					return nil, fmt.Errorf("line %d:%d: %s is not a finite number", n.Line, n.Column, n.Value)
+				}
+				return f, nil
 			}
 		}
-		return n.Value
+		return n.Value, nil
 	default:
 	}
-	return nil
+	return nil, nil
 }

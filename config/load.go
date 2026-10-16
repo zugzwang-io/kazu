@@ -37,7 +37,11 @@ func Parse(file string, data []byte) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
-	if err := compiledSchema().Validate(toAny(root)); err != nil {
+	tree, err := toAny(root)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	if err := compiledSchema().Validate(tree); err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	d := decoder{}
