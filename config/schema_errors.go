@@ -210,7 +210,6 @@ var patternNames = map[string]string{
 	"^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$":                                "a duration such as 300ms, 20s or 1m30s",
 	"^[0-9]+(\\.[0-9]+)?%$":                                            "a percentage such as 20%",
 	"^(100(\\.0+)?|[0-9]{1,2}(\\.[0-9]+)?)%$":                          "a percentage from 0% to 100%",
-	"^[0-9]+(\\.[0-9]+)?pp$":                                           "percentage points such as 0.5pp",
 	"^[0-9]+(\\.[0-9]+)?(bps|kbps|mbps|gbps)$":                         "a bandwidth such as 64kbps",
 	"^[A-Za-z0-9][A-Za-z0-9_.-]*$":                                     "a name (letters, digits, '.', '_' and '-')",
 	"^ *[A-Za-z0-9][A-Za-z0-9_.-]* *-> *[A-Za-z0-9][A-Za-z0-9_.-]* *$": `an edge written as "caller -> callee"`,

@@ -90,9 +90,22 @@ func TestProblems(t *testing.T) {
 		{"empty suite", "suites:\n  pr: []\n", []string{
 			`11:7: suites.pr: must not be empty`,
 		}},
-		{"gate", "gate: { trials: sometimes, flaky: maybe }\n", []string{
-			`10:17: gate.trials: "sometimes" is not allowed here; the only text value is "auto"`,
-			`10:35: gate.flaky: "maybe" is not one of "fail", "warn"`,
+		{"word other than all, severity other than fail or warn", "suites: { pr: everything }\nscenarios: { a: { not_exercised: maybe } }\n", []string{
+			`10:15: suites.pr: "everything" is not allowed here; the only text value is "all"`,
+			`11:34: scenarios.a.not_exercised: "maybe" is not one of "fail", "warn"`,
+		}},
+		{"from with after_requests", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: x, after_requests: 5 }\n", []string{
+			`13:77: scenarios.a.faults[0].after_requests: "after_requests" can't go with "from"`,
+		}},
+		{"from a fault's end, spelled out", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: { end: x } }\n", []string{
+			`13:58: scenarios.a.faults[0].from: missing key "start"`,
+			`13:60: scenarios.a.faults[0].from.end: unknown key "end"`,
+		}},
+		{"from as an empty list", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: [] }\n", []string{
+			`13:58: scenarios.a.faults[0].from: must not be empty`,
+		}},
+		{"from a name with a space", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: down, from: [ok, slow pay] }\n", []string{
+			`13:63: scenarios.a.faults[0].from[1]: "slow pay" is not a name (letters, digits, '.', '_' and '-')`,
 		}},
 		{"key that is not a name", "scenarios:\n  a: { faults: [] }\n  b:\n    env:\n      checkout payments: { A: b }\n", []string{
 			`14:7: scenarios.b.env["checkout payments"]: "checkout payments" is not a name (letters, digits, '.', '_' and '-')`,
@@ -101,8 +114,8 @@ func TestProblems(t *testing.T) {
 			`11:27: scenarios.a.env.checkout.BAD-VAR: "BAD-VAR" is not an env var name`,
 			`12:27: scenarios.b.env.checkout.BAD-VAR: "BAD-VAR" is not an env var name`,
 		}},
-		{"problems on several lines sort by line", "gate: { flaky: maybe }\nscenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency }\n      - { fault: down, after: 20 }\n", []string{
-			`10:16: gate.flaky: "maybe" is not one of "fail", "warn"`,
+		{"problems on several lines sort by line", "suites: { pr: everything }\nscenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency }\n      - { fault: down, after: 20 }\n", []string{
+			`10:15: suites.pr: "everything" is not allowed here; the only text value is "all"`,
 			`14:9: scenarios.a.faults[0]: missing key "delay"`,
 			`15:9: scenarios.a.faults[1]: needs one of edge or service`,
 			`15:31: scenarios.a.faults[1].after: expected a duration such as 300ms, 20s or 1m30s, got a number`,
@@ -123,8 +136,8 @@ func TestProblems(t *testing.T) {
 		{"merge key that is not a map", "scenarios:\n  a: { <<: 5 }\n", []string{
 			`11:12: a merge key (<<) takes a map or a list of maps`,
 		}},
-		{"number the decoder can't hold", "gate: { trials: 5.0 }\n", []string{
-			`10:17: expected a whole number, got 5.0`,
+		{"number the decoder can't hold", "checks: [ { http: { on: postgres, path: /x, expect: { status: 200.0 } } } ]\n", []string{
+			`10:63: expected a whole number, got 200.0`,
 		}},
 	}
 	for _, tt := range tests {
@@ -184,12 +197,12 @@ func TestWholeFileProblems(t *testing.T) {
 
 // The structured error carries what the text shows.
 func TestErrorFields(t *testing.T) {
-	_, err := config.Parse("kazu.yaml", []byte(base+"gate: { flaky: maybe }\n"))
+	_, err := config.Parse("kazu.yaml", []byte(base+"scenarios: { a: { not_exercised: maybe } }\n"))
 	var e *config.Error
 	if !errors.As(err, &e) {
 		t.Fatalf("not a *config.Error: %T", err)
 	}
-	want := config.Problem{Line: 10, Column: 16, Path: "gate.flaky", Message: `"maybe" is not one of "fail", "warn"`}
+	want := config.Problem{Line: 10, Column: 34, Path: "scenarios.a.not_exercised", Message: `"maybe" is not one of "fail", "warn"`}
 	if e.File != "kazu.yaml" || len(e.Problems) != 1 || e.Problems[0] != want {
 		t.Errorf("error = %+v", e)
 	}
