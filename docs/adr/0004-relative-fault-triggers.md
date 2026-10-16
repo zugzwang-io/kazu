@@ -1,7 +1,7 @@
 # ADR-0004: Faults can start relative to other faults' planned start or end
 
 Date: 2026-10-15
-Status: Proposed (awaiting Varun's sign-off on PR #13)
+Status: Accepted (2026-10-16)
 
 ## Context
 
@@ -33,4 +33,4 @@ Considered and lost:
 
 ## Consequences
 
-The schema carries `name` and `from` now (ADR-0002, decision 12: kept keys have their intended shape). Resolving anchors into times is plan work (driver 4/4's `KAZU_DURATION` computation, generalised). On acceptance, fold into DESIGN.md §4.4/§4.5 and §11.
+The schema carries `name` and `from` now (ADR-0002, decision 12: kept keys have their intended shape). Resolving anchors into times is plan work (driver 4/4's `KAZU_DURATION` computation, generalised). Folded into DESIGN.md §4.4 and §4.5 on acceptance.

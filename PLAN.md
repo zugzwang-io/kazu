@@ -53,15 +53,15 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 
 The k6 template and the `PAYMENTS_BY_IP` trap were listed here but need Kazu's runtime; they are Phase 3 bullets now.
 
-## Phase 2 — kazu.yaml config
+## Phase 2 — kazu.yaml config ✅
 
-The stack under review. Held until this plan's frontend sketch had been worked backwards to the config (see "Frontend sketch", below): the screens need nothing `kazu.yaml` doesn't already carry, so [ADR-0002](docs/adr/0002-kazu-yaml-schema-shape.md) stands as proposed and the stack can be reviewed on its own merits. Reworked in review (2026-10-15): the schema drops `telemetry`, `auto_scenarios`, `defaults` and `gate` until they're built, keeps every other key at its final shape, adds scenario `checks` and relative triggers ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)), and `sql` checks pass on zero rows.
+Merged 2026-10-16; ADR-0002 and ADR-0004 accepted. Held until this plan's frontend sketch had been worked backwards to the config (see "Frontend sketch", below): the screens need nothing `kazu.yaml` doesn't already carry, so [ADR-0002](docs/adr/0002-kazu-yaml-schema-shape.md) stands as proposed and the stack can be reviewed on its own merits. Reworked in review (2026-10-15): the schema drops `telemetry`, `auto_scenarios`, `defaults` and `gate` until they're built, keeps every other key at its intended shape, adds scenario `checks` and relative triggers ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)), and `sql` checks pass on zero rows. The not-supported-yet list was dropped in #17 (YAGNI); a Phase 5 launch bullet trims the schema to what's built.
 
 - [x] #13 config 1/5: JSON schema for kazu.yaml — **the one to agree on**; decisions recorded in ADR-0002 and ADR-0004
 - [x] #14 config 2/5: Go types for kazu.yaml
 - [x] #15 config 3/5: decode kazu.yaml into Config
 - [x] #16 config 4/5: readable errors with positions (works around a jsonschema v6.0.3 propertyNames location bug)
-- [~] #17 config 5/5: rules that relate one key to another (rejects row S3) and anchor rules
+- [x] #17 config 5/5: rules that relate one key to another (rejects row S3) and anchor rules
 
 ## Phase 3 — Walking skeleton: `kazu run` end to end (DESIGN §8 step 1)
 

@@ -1,7 +1,7 @@
 # ADR-0002: kazu.yaml structural contract lives in a published JSON schema
 
 Date: 2026-10-14
-Status: Proposed (awaiting Varun's sign-off on PR #13)
+Status: Accepted (2026-10-16)
 
 ## Context
 
@@ -30,7 +30,7 @@ Proposals beyond DESIGN.md (from PR #13; accepting this ADR accepts them):
 
 ## Consequences
 
-On acceptance, fold the proposals into DESIGN.md §4.4 so the reference and the schema agree; until then §4.4 deliberately omits them.
+Folded into DESIGN.md §4.4–§4.6 on acceptance.
 
 Editors get completion/validation without Kazu code; typos fail loudly. Tests validate with a generic validator, keeping the contract honest.
 
