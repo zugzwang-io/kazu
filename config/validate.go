@@ -22,7 +22,7 @@ type validator struct {
 	cfg  *Config
 }
 
-func validate(ps *problems, root *yaml.Node, cfg *Config, built bool) {
+func validate(ps *problems, root *yaml.Node, cfg *Config) {
 	v := validator{ps: ps, root: root, cfg: cfg}
 	v.edges()
 	top := v.checks([]string{"checks"}, cfg.Checks, nil)
@@ -33,9 +33,6 @@ func validate(ps *problems, root *yaml.Node, cfg *Config, built bool) {
 		for i, name := range s.Scenarios {
 			v.suiteEntry([]string{"suites", s.Name, strconv.Itoa(i)}, name)
 		}
-	}
-	if built {
-		v.unsupported()
 	}
 }
 
@@ -395,20 +392,11 @@ func (v *validator) suiteEntry(path []string, name string) {
 		v.ps.add(path, `"all" is written as the suite's value (pr: all), not as an entry in its list`)
 		return
 	}
-	if generated(name) {
-		return // generated scenarios are not supported yet; see unsupported
-	}
 	var names []string
 	for _, s := range v.cfg.Scenarios {
 		names = append(names, s.Name)
 	}
 	v.ps.add(path, fmt.Sprintf("no scenario named %q", name)+suggest(name, names))
-}
-
-// generated reports whether a suite entry names generated scenarios:
-// "auto", or one auto scenario.
-func generated(name string) bool {
-	return name == "auto" || strings.HasPrefix(name, "auto-")
 }
 
 func (v *validator) edgeNames() []string {

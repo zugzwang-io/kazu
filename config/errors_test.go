@@ -163,7 +163,7 @@ func TestProblems(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.ParseContract("kazu.yaml", []byte(base+tt.yaml))
+			_, err := config.Parse("kazu.yaml", []byte(base+tt.yaml))
 			var got []string
 			if err != nil {
 				for _, line := range strings.Split(err.Error(), "\n") {
@@ -190,7 +190,7 @@ func TestPropertyNamePlacement(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.ParseContract("kazu.yaml", []byte(tt.src))
+			_, err := config.Parse("kazu.yaml", []byte(tt.src))
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("got  %v\nwant %s", err, tt.want)
 			}
@@ -209,7 +209,7 @@ func TestWholeFileProblems(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.ParseContract("kazu.yaml", []byte(tt.src))
+			_, err := config.Parse("kazu.yaml", []byte(tt.src))
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("got %v\nwant %s", err, tt.want)
 			}
@@ -219,7 +219,7 @@ func TestWholeFileProblems(t *testing.T) {
 
 // The structured error carries what the text shows.
 func TestErrorFields(t *testing.T) {
-	_, err := config.ParseContract("kazu.yaml", []byte(base+"scenarios: { a: { not_exercised: maybe } }\n"))
+	_, err := config.Parse("kazu.yaml", []byte(base+"scenarios: { a: { not_exercised: maybe } }\n"))
 	var e *config.Error
 	if !errors.As(err, &e) {
 		t.Fatalf("not a *config.Error: %T", err)
@@ -232,7 +232,7 @@ func TestErrorFields(t *testing.T) {
 
 func TestSuggestThreshold(t *testing.T) {
 	for _, key := range []string{"zzzzzzzz", "sys"} {
-		_, err := config.ParseContract("kazu.yaml", []byte(base+key+": {}\n"))
+		_, err := config.Parse("kazu.yaml", []byte(base+key+": {}\n"))
 		if err == nil || strings.Contains(err.Error(), "did you mean") {
 			t.Errorf("%q: unwanted suggestion in %v", key, err)
 		}

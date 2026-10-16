@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zugzwang-io.github.io/kazu/kazu.schema.json",
   "title": "kazu.yaml",
-  "description": "Kazu configuration: the system, traffic, edges, connections, scenarios, checks and suites. More top-level keys join as Kazu builds them; inside each key the shape is where the interface is headed, and kazu rejects what it doesn't support yet. The schema covers everything decidable inside one object: types, unknown keys, enums, string formats, and which fields each fault or check kind takes. Rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
+  "description": "Kazu configuration: the system, traffic, edges, connections, scenarios, checks and suites. More top-level keys join as Kazu builds them; inside each key the shape is where the interface is headed. The schema covers everything decidable inside one object: types, unknown keys, enums, string formats, and which fields each fault or check kind takes. Rules that relate one key to another (a fault's edge must be declared, request-count triggers need an http or grpc edge, ...) are checked by kazu itself.",
   "type": "object",
   "additionalProperties": false,
   "required": ["system", "traffic"],

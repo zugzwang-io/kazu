@@ -33,4 +33,4 @@ Considered and lost:
 
 ## Consequences
 
-The schema carries `name` and `from` now (ADR-0002, decision 12: kept keys have their intended shape). Resolving anchors into times is plan work (driver 4/4's `KAZU_DURATION` computation, generalised); until it lands, Kazu rejects `from` as not supported yet. On acceptance, fold into DESIGN.md §4.4/§4.5 and §11.
+The schema carries `name` and `from` now (ADR-0002, decision 12: kept keys have their intended shape). Resolving anchors into times is plan work (driver 4/4's `KAZU_DURATION` computation, generalised). On acceptance, fold into DESIGN.md §4.4/§4.5 and §11.

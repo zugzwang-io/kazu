@@ -18,17 +18,13 @@ import (
 
 // Load reads and validates the config file at path. Relative paths in it
 // (the system file) are resolved against the file's directory. Errors from
-// the file itself are an *Error, including anything the schema allows that
-// this build doesn't support yet.
-func Load(path string) (*Config, error) { return load(path, true) }
-
-// load reads the file at path; built adds the not-supported-yet check.
-func load(path string, built bool) (*Config, error) {
+// the file itself are an *Error.
+func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	cfg, ps := parse(data, built)
+	cfg, ps := parse(data)
 	if cfg != nil {
 		checkSystemExists(ps, cfg, filepath.Dir(path))
 	}
@@ -40,10 +36,8 @@ func load(path string, built bool) (*Config, error) {
 
 // Parse validates a config held in memory. file names it in errors. Paths
 // in the config are not checked; Load does that.
-func Parse(file string, data []byte) (*Config, error) { return parseFile(file, data, true) }
-
-func parseFile(file string, data []byte, built bool) (*Config, error) {
-	cfg, ps := parse(data, built)
+func Parse(file string, data []byte) (*Config, error) {
+	cfg, ps := parse(data)
 	if err := ps.err(file); err != nil {
 		return nil, err
 	}
@@ -53,8 +47,7 @@ func parseFile(file string, data []byte, built bool) (*Config, error) {
 // parse reports every problem it can see at once. Only invalid YAML and a
 // tree too deep to read stop it early, because nothing after them can be
 // trusted; the cross-key rules run only on a tree the schema accepted.
-// built adds what this build doesn't support yet to the problems.
-func parse(data []byte, built bool) (*Config, *problems) {
+func parse(data []byte) (*Config, *problems) {
 	ps := &problems{}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -101,7 +94,7 @@ func parse(data []byte, built bool) (*Config, *problems) {
 	if len(ps.list) > 0 {
 		return nil, ps
 	}
-	validate(ps, root, cfg, built)
+	validate(ps, root, cfg)
 	if len(ps.list) > 0 {
 		return nil, ps
 	}

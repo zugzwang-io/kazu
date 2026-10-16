@@ -13,7 +13,7 @@ import (
 
 // A request-count trigger on a TCP edge is a config error before any trial.
 func TestRequestCountTriggerOnTCPEdge(t *testing.T) {
-	_, err := config.ParseContract("kazu.yaml", []byte(base+`
+	_, err := config.Parse("kazu.yaml", []byte(base+`
 scenarios:
   s3:
     faults:
@@ -104,12 +104,13 @@ func TestRules(t *testing.T) {
 		}},
 		{"suite entries", "scenarios:\n  db-blip: {}\nsuites:\n  pr: [db-blpi, auto, all]\n", []string{
 			`13:8: suites.pr[0]: no scenario named "db-blpi" (did you mean "db-blip"?)`,
+			`13:17: suites.pr[1]: no scenario named "auto"`,
 			`13:23: suites.pr[2]: "all" is written as the suite's value (pr: all), not as an entry in its list`,
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.ParseContract("kazu.yaml", []byte(base+tt.yaml))
+			_, err := config.Parse("kazu.yaml", []byte(base+tt.yaml))
 			var got []string
 			if err != nil {
 				for _, line := range strings.Split(err.Error(), "\n") {
@@ -161,7 +162,7 @@ func TestAnchorRules(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.ParseContract("kazu.yaml", []byte(base+tt.yaml))
+			_, err := config.Parse("kazu.yaml", []byte(base+tt.yaml))
 			var got []string
 			if err != nil {
 				for _, line := range strings.Split(err.Error(), "\n") {
@@ -177,7 +178,7 @@ func TestAnchorRules(t *testing.T) {
 
 // Check rules need a second connection, so they get their own document.
 func TestCheckRules(t *testing.T) {
-	_, err := config.ParseContract("kazu.yaml", []byte(`system: docker-compose.yml
+	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
 traffic: { image: grafana/k6:1.0.0 }
 edges:
   traffic -> checkout: http
@@ -235,11 +236,10 @@ func TestRulesAccept(t *testing.T) {
 		{"duration check skips anchored faults", "scenarios:\n  a:\n    duration: 10s\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down, after: 1s, for: 5s }\n      - { edge: worker -> payments, fault: down, from: x, after: 20s }\n"},
 		{"duration that covers its faults", "scenarios:\n  a:\n    duration: 30s\n    faults:\n      - { edge: checkout -> payments, fault: down, after: 20s, for: 10s }\n"},
 		{"zero tolerance", "checks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},
-		{"generated scenarios, which the build check rejects", "suites: { pr: [auto, auto-crash-payments, auto-down-checkout-payments] }\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := config.ParseContract("kazu.yaml", []byte(mixed+tt.yaml)); err != nil {
+			if _, err := config.Parse("kazu.yaml", []byte(mixed+tt.yaml)); err != nil {
 				t.Errorf("rejected:\n%v", err)
 			}
 		})
@@ -259,7 +259,7 @@ func TestStatusCodes(t *testing.T) {
 	}
 	for fields, want := range accept {
 		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + fields + " }\n"
-		cfg, err := config.ParseContract("kazu.yaml", []byte(src))
+		cfg, err := config.Parse("kazu.yaml", []byte(src))
 		if err != nil {
 			if strings.Contains(fields, "timeout") {
 				continue // timeout takes no code; the schema says so
@@ -283,7 +283,7 @@ func TestStatusCodes(t *testing.T) {
 	for field, want := range reject {
 		edge, code, _ := strings.Cut(field, ", ")
 		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + edge + ", fault: errors, rate: 5%, " + code + " }\n"
-		_, err := config.ParseContract("kazu.yaml", []byte(src))
+		_, err := config.Parse("kazu.yaml", []byte(src))
 		if err == nil || !strings.HasSuffix(err.Error(), want) {
 			t.Errorf("%s: got %v\nwant suffix %s", field, err, want)
 		}
@@ -292,7 +292,7 @@ func TestStatusCodes(t *testing.T) {
 
 // Edge problems need their own file: base already declares edges.
 func TestEdgeProblems(t *testing.T) {
-	_, err := config.ParseContract("kazu.yaml", []byte(`system: docker-compose.yml
+	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
 traffic: { image: grafana/k6:1.0.0 }
 edges:
   checkout -> checkout: tcp
@@ -338,7 +338,7 @@ func TestLoadChecksSystemPath(t *testing.T) {
 	}
 
 	p = write("kazu.yaml", "system: { manifests: compose.yml }\ntraffic: { image: grafana/k6:1.0.0 }\n")
-	_, err = config.LoadContract(p)
+	_, err = config.Load(p)
 	if err == nil || !strings.Contains(err.Error(), "system.manifests: compose.yml is not a directory") {
 		t.Errorf("manifests naming a file: %v", err)
 	}

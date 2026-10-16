@@ -61,13 +61,11 @@ The stack under review. Held until this plan's frontend sketch had been worked b
 - [x] #14 config 2/5: Go types for kazu.yaml
 - [x] #15 config 3/5: decode kazu.yaml into Config
 - [x] #16 config 4/5: readable errors with positions (works around a jsonschema v6.0.3 propertyNames location bug)
-- [~] #17 config 5/5: rules that relate one key to another (rejects row S3), anchor rules, and the not-supported-yet list
+- [~] #17 config 5/5: rules that relate one key to another (rejects row S3) and anchor rules
 
 ## Phase 3 — Walking skeleton: `kazu run` end to end (DESIGN §8 step 1)
 
 Done when `kazu run` drives the shop's `checkout → payments → postgres` through one scenario, base and head, and rows V0 and S1–S3 gate Kazu's own PRs. Three stacks (proxy, driver, checks) can proceed in parallel; the controller, verdict and CLI bullets join them.
-
-From here on, a bullet that builds a config feature also deletes its entry from config's not-supported-yet list (`config/supported.go`), so the config accepts exactly what runs.
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
@@ -119,7 +117,7 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 - [ ] process faults: `crash` (kill in place, `restart_after`) and `pause`, recorded as Kazu's own so the crash default excludes them
 - [ ] checks: `@eventually(within=…)` in the SDK and the host's retry loop
 - [ ] checks: `http:` one-line check and the `http` SDK callback
-- [ ] plan: resolve fault anchors (`from`, joins) into times; config stops rejecting `from` (ADR-0004)
+- [ ] plan: resolve fault anchors (`from`, joins) into times (ADR-0004)
 - [ ] faults on a service: network faults on every declared inbound edge of the service
 - [ ] scenarios: a scenario's `traffic:` override, merged over the default traffic
 - [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan + per-trial results + proxy counters; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
@@ -154,6 +152,7 @@ Done when the shop's rows gate Kazu's PRs through the same GitHub Action a custo
 - [ ] shop: `SCHEMA_V2` trap; rows S7 (20 repeats as 20 shards), S8, S9
 - [ ] docs: GitHub Pages at `zugzwang-io.github.io/kazu` — install, quickstart on the shop, reference, schema served at its `$id`
 - [ ] launch: README rewrite, the Phase 0 pre-public pass, package claims (`kazu-cli` on npm and PyPI, placeholders on crates.io), trademark check, v0.x tag
+- [ ] launch: the schema holds only what Kazu implements; anything still unbuilt leaves `kazu.schema.json` before the v0.x tag (ADR-0002, decision 12)
 
 ## Phase 6 — Easy and everywhere (DESIGN §8 step 4) → v1.0
 
