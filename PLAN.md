@@ -44,6 +44,8 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #30 CLAUDE.md: read uncovered lines before a PR; no coverage threshold
 - [x] #31 docs: ADR-0002 and ADR-0004 accepted, config decisions folded into DESIGN.md
 - [x] #32 plan: Phase 3 derisked after the 2026-10-16 foundations review (S14, networking spike, slice order, ADR-0003 accepted, ADR-0005 proposed)
+- [x] #37 adr: the planner rejects config it can't run yet (ADR-0007); traffic decides its own length, Kazu caps a trial at 30 min (ADR-0006)
+- [x] #38 config: scenario `duration:` removed (ADR-0006)
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
@@ -74,7 +76,7 @@ Order (2026-10-16 foundations review): the networking spike first, then the thin
 
 Networking (derisk first):
 
-- [ ] spike → ADR-0005 (drafted in #32): Kazu reaches the trial network through one in-network helper container (decided 2026-10-16). Prove it on a GitHub-hosted Linux runner first (CI is what matters; macOS second): the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP, on a sealed (`internal`) network; the host drives the helper over one channel to read the proxy's counters and run a SQL query against `postgres`
+- [x] spike → ADR-0005 (accepted 2026-10-16; branch `spike-network`, all checks pass on a GitHub runner and Colima): Kazu reaches the trial network through one in-network helper container (decided 2026-10-16). Prove it on a GitHub-hosted Linux runner first (CI is what matters; macOS second): the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP, on a sealed (`internal`) network; the host drives the helper over one channel to read the proxy's counters and run a SQL query against `postgres`
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
@@ -88,8 +90,8 @@ Proxy (`kazu proxy`, one container per declared edge; tests run against an in-pr
 Driver (compose):
 
 - [ ] driver 1/4: load the system with compose-go — services, healthchecks, one-shot jobs (`service_completed_successfully`), `--base`/`--head` variable interpolation
-- [ ] driver 2/4: project rewrite — a proxy service per declared edge, `extra_hosts` on the caller only, a project name per trial
-- [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED` and the scenario's `env`, wait for exit, stopping a trial still running after 30 min (*not exercised*, [ADR-0006](docs/adr/0006-fixed-traffic-duration.md)), delete
+- [ ] driver 2/4: project rewrite — a proxy service per declared edge, `extra_hosts` on the caller only, a project name per trial; the trial network, static proxy IPs, port removal, subnet retry and the helper as ADR-0005's Consequences list
+- [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED` and the scenario's `env`, wait for exit, stopping a trial still running after 30 min (*not exercised*, [ADR-0006](docs/adr/0006-traffic-decides-its-length.md)), delete
 - [ ] driver 4/4: trial plan — scenarios × {base, head}; rejects any config field the runtime doesn't implement yet, naming it ([ADR-0007](docs/adr/0007-the-planner-rejects-what-it-cant-run.md))
 - [ ] controller: pushes programs to proxies, starts their clocks at traffic start, collects counters; the landed check turns a fault that never applied into **not exercised** with its reason
 
@@ -146,11 +148,12 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 Done when the shop's rows gate Kazu's PRs through the same GitHub Action a customer uses, and v0.x is public.
 
 - [ ] spike → ADR: the statistical method, validated on the shop's race flag and repeated baselines — test, minimum pairs, budget, default tolerances as policy (DESIGN §8 spike, §10)
+  Input from the 2026-10-16 noise spike (branch `spike-noise`; 3 conditions × 20 runs, consecutive base/head pairs on one GitHub runner, no order bias): whole-run p99 with no fault differed by >20% in 1 of 10 identical pairs while p95 stayed within 0.7%, and the recovery window was the noisiest (p90 pair difference 109–507%); latency during a fault is stable (≤0.2%, set by timeouts); unpaid-order rate differed by ~1 pp overall and up to 4 pp during a fault; HTTP error rate stayed 0 throughout a payments outage, because checkout answers 202 pending. Starting points: p95 as the default latency measure, at least 3 pairs with the median of per-pair ratios, comparisons per fault window, an error tolerance wider than 0.5 pp and measured on failed outcomes rather than HTTP status
 - [ ] verdict: trial pairs — same seed, base and head back to back; fixed `gate.trials: N` (adds `gate` to the schema); pair results in the record
 - [ ] verdict: paired comparison with the per-run noise estimate; **underpowered** when the budget can't resolve the tolerance
 - [ ] verdict: adaptive trials (`trials: auto`) — stop early when decided, add pairs while undecided, up to the budget
 - [ ] checks: `no_regression`, `slo`, `recovers` one-line checks over proxy measures (`p50/p90/p95/p99/error_rate`)
-- [ ] defaults: regression defaults (`latency_within`, `error_rate_within`, `recovers_within`) on user-facing edges; `defaults.off` (adds `defaults` to the schema)
+- [ ] defaults: regression defaults (`latency_within`, `error_rate_within`, `recovers_within`) on user-facing edges; `defaults.off` (adds `defaults` to the schema); a recovery window cut short by the end of traffic is *not exercised*, never a pass (ADR-0006)
 - [ ] verdict: flaky classification; `gate.fail_on`, `gate.flaky`, `gate.not_exercised`, `gate.no_data`, `gate.underpowered` honoured end to end
 - [ ] verdict: false-discovery control across many scenarios and checks
 - [ ] output: `--junit` and `--markdown` sinks from the record

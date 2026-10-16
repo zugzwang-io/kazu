@@ -1,7 +1,7 @@
 # ADR-0005: How the kazu binary reaches containers in the trial network
 
 Date: 2026-10-16
-Status: Proposed (drafted by the 2026-10-16 foundations review)
+Status: Accepted (2026-10-16)
 
 ## Context
 
@@ -15,8 +15,19 @@ Considered and lost:
 - **Published host ports with URL rewriting**: publishes the customer's services (their database) and doesn't work on a sealed `internal` network; rewriting every connection scheme is fiddly.
 - **Running all of Kazu in a container**: breaks the one-binary-on-your-laptop story and makes debugging awkward.
 
-Either way, the driver asks Docker for a free subnet, puts the trial network on it and gives each proxy a static IP for `extra_hosts`; a system file that pins a conflicting subnet is a positioned config error.
+**The channel is one long-lived `docker compose exec -T` session into the helper, speaking JSON lines on stdin/stdout** (proved by the spike below). A published port can't exist on an `internal` network; `docker attach` was rejected because it never exits on EOF or SIGTERM (a local run hung until SIGKILL) and ties the channel to the helper's single stdin.
+
+The driver asks Docker for a free subnet, puts the trial network on it and gives each proxy a static IP for `extra_hosts`; a system file that pins a conflicting subnet is a positioned config error.
 
 ## Consequences
 
-The Phase 3 spike proves it on a GitHub-hosted runner before any driver code; driver 2/4 and the controller build on it. The host-to-helper channel (one published port, or stdio via attach) is the spike's to pick.
+**Proved by the Phase 3 spike** (branch `spike-network`, run 38973416568), every check passing 3× on a GitHub-hosted runner and 3× on Colima: the shop healthy on a Kazu-chosen subnet with `internal: true` (`up --wait` works; healthchecks run inside containers); checkout's calls to payments through a static-IP proxy via `extra_hosts`, with the alias per-caller (another container calling `payments` bypasses it); SQL and HTTP from the host through the helper; the network sealed (internet and external DNS fail at once); clean teardown and subnet reuse; the subnet picker skipping a taken range. On the runner, with images cached, `up --wait` takes ~6 s and a host↔helper round trip under 1 ms.
+
+What the driver must do, learned in the spike:
+- Override the project's default network (`networks.default` with `internal: true` and `ipam` `subnet` + `ip_range`); no service needs editing.
+- Keep Docker's dynamic addresses out of the proxies' range: `ip_range` takes the lower half, proxies get static addresses from `.200`.
+- Remove published ports with `ports: !reset []` (Compose 2.24 or later).
+- `up --wait` an explicit service list, and add `depends_on` from each caller to its proxy.
+- Use absolute build contexts in the generated override: relative paths resolve against the first compose file's directory.
+- Retry subnet allocation when Docker reports an overlap: the picker sees only Docker's networks (not host routes or VPNs), and two trials on one daemon can race.
+- **Proxy counters must update as bytes flow, not on close**: checkout keeps one keep-alive connection for the whole run, so close-time counters read 0 and the landed check would call every fault on that edge not exercised.
