@@ -193,10 +193,10 @@ func TestUpstreamDownClosesCallerAndKeepsServing(t *testing.T) {
 	}
 }
 
-func TestCountsOtherDialFailures(t *testing.T) {
-	p, addr := startProxy(t, "127.0.0.1:99999")
+func TestCountsAnUndialableUpstreamAsFailed(t *testing.T) {
+	p, addr := startProxy(t, "127.0.0.1:99999") // an invalid port fails before any network I/O
 	if _, err := dial(t, addr).Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-		t.Fatalf("read from a proxy with a bad upstream address = %v, want EOF", err)
+		t.Fatalf("read from a proxy with an invalid upstream address = %v, want EOF", err)
 	}
 	if got, want := p.Counters(), (proxy.Counters{Connections: 1, DialsFailed: 1}); got != want {
 		t.Fatalf("%+v, want %+v", got, want)
@@ -276,6 +276,9 @@ func TestAcceptFailureClosesLiveConnections(t *testing.T) {
 	}
 	if n, err := c.Read(make([]byte, 1)); n != 0 || isTimeout(err) {
 		t.Fatalf("live connection still open after Serve returned: %d, %v", n, err)
+	}
+	if _, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", ln.Addr().String()); err == nil {
+		t.Fatal("listener still accepting after Accept failed")
 	}
 }
 

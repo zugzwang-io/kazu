@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"sync/atomic"
@@ -28,5 +30,18 @@ func TestDialFailureClassifiesErrors(t *testing.T) {
 		if got := p.dialFailure(tc.err); got != tc.want {
 			t.Errorf("%s: counted under the wrong counter", tc.name)
 		}
+	}
+}
+
+func TestDialCutShortByShutdownIsNotCounted(t *testing.T) {
+	caller, peer := net.Pipe()
+	defer peer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	p := New("127.0.0.1:1", slog.New(slog.DiscardHandler))
+	p.forward(ctx, caller)
+	if got := p.Counters(); got != (Counters{}) {
+		t.Fatalf("a dial cancelled by shutdown was counted: %+v", got)
 	}
 }

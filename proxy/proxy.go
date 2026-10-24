@@ -28,10 +28,12 @@ type Counters struct {
 	// the upstream.
 	BytesUp, BytesDown int64
 	// DialsRefused, DialsTimedOut and DialsFailed count accepted connections
-	// cut because the upstream dial failed: refused (nothing listening, so
-	// the upstream is down), timed out (no answer at all), or failed any
-	// other way, such as no route or a name that doesn't resolve. The
-	// caller can't tell these apart; it only sees its connection close.
+	// cut because the upstream dial failed: refused (the host is up but
+	// nothing listens on the port, such as a crashed process in a running
+	// container), timed out (no answer at all), or failed any other way. A
+	// stopped compose service lands in DialsFailed: its name stops
+	// resolving. The caller can't tell these apart; it only sees its
+	// connection close. Dials cut short by shutdown aren't counted.
 	DialsRefused, DialsTimedOut, DialsFailed int64
 }
 
@@ -99,6 +101,9 @@ func (p *Proxy) forward(ctx context.Context, caller net.Conn) {
 	defer caller.Close()
 	upstream, err := (&net.Dialer{}).DialContext(ctx, "tcp", p.upstream)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		p.dialFailure(err).Add(1)
 		p.log.Warn("dial upstream", "upstream", p.upstream, "err", err)
 		return
