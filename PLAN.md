@@ -82,7 +82,7 @@ Networking (derisk first):
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
-- [ ] proxy 1/5: TCP forwarder with connection and byte counters; `kazu proxy` subcommand
+- [~] #41 proxy 1/5: TCP forwarder with connection and byte counters; `kazu proxy` subcommand
 - [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in both directions, seeded; records the open latency decision in SPEC.md
 - [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`
 - [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; applied-fault counters for the landed check
