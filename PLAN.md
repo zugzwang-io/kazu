@@ -46,6 +46,8 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #32 plan: Phase 3 derisked after the 2026-10-16 foundations review (S14, networking spike, slice order, ADR-0003 accepted, ADR-0005 proposed)
 - [x] #37 adr: the planner rejects config it can't run yet (ADR-0007); traffic decides its own length, Kazu caps a trial at 30 min (ADR-0006)
 - [x] #38 config: scenario `duration:` removed (ADR-0006)
+- [x] #39 docs: ADR-0005 accepted with the spike's findings; follow-ups for #37/#38
+- [x] #40 CLAUDE.md: tests must be shown load-bearing before they count
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
@@ -113,7 +115,7 @@ Shop and the e2e gate:
 - [x] #33 shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
 - [x] #34 shop: a test for a connection reset mid-request (→ `pending`); it found net/http silently resending a reset request, which could mark a charged order `failed` (fixed)
 - [x] #35 shop: integration tests open one pool per service with production settings and `search_path`, not one shared pool
-- [~] #36 shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
+- [x] #36 shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
 - [ ] shop: step-1 `kazu.yaml` with a liveness check (some order got paid, so zero-row checks can't pass on no traffic), `safety/` configs for S1–S3 and S14, `expectations.yaml` with V0, S1–S3 and S14
 - [ ] shop: `SHOP_TRAP_PAYMENTS_BY_IP`, with the plain Go test showing the alias is bypassed
 - [ ] e2e gate: workflow that builds the binary and SDK image and runs the shop as a customer would; a Go asserter (not Kazu) compares each row's JSON to `expectations.yaml` and requires nonzero user-facing edge counters on V0 and S2; rows V0, S1–S3 and S14 become required checks
