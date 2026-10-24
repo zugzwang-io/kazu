@@ -2,46 +2,41 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net"
-	"os"
-	"sync/atomic"
-	"syscall"
+	"strings"
 	"testing"
 )
 
-func TestDialFailureClassifiesErrors(t *testing.T) {
-	connect := func(errno error) error {
-		return &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", errno)}
+// forwardOnce runs forward for one piped caller connection, dialling a port
+// nothing listens on, and returns what it logged.
+func forwardOnce(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	p := &Proxy{}
-	for _, tc := range []struct {
-		name string
-		err  error
-		want *atomic.Int64
-	}{
-		{"refused", connect(syscall.ECONNREFUSED), &p.dialsRefused},
-		{"connect timed out", connect(syscall.ETIMEDOUT), &p.dialsTimedOut},
-		{"no route", connect(syscall.EHOSTUNREACH), &p.dialsFailed},
-		{"name not found", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", IsNotFound: true}}, &p.dialsFailed},
-		{"other", errors.New("boom"), &p.dialsFailed},
-	} {
-		if got := p.dialFailure(tc.err); got != tc.want {
-			t.Errorf("%s: counted under the wrong counter", tc.name)
-		}
+	refused := ln.Addr().String()
+	ln.Close()
+
+	caller, peer := net.Pipe()
+	defer peer.Close()
+	var log strings.Builder
+	New(refused, slog.New(slog.NewTextHandler(&log, nil))).forward(ctx, caller)
+	return log.String()
+}
+
+func TestDialFailureIsLoggedWithItsCause(t *testing.T) {
+	got := forwardOnce(context.Background(), t)
+	if !strings.Contains(got, "dial upstream") || !strings.Contains(got, "connection refused") {
+		t.Fatalf("log %q doesn't name the failed dial and its cause", got)
 	}
 }
 
-func TestDialCutShortByShutdownIsNotCounted(t *testing.T) {
-	caller, peer := net.Pipe()
-	defer peer.Close()
+func TestDialCutShortByShutdownIsNotLogged(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	p := New("127.0.0.1:1", slog.New(slog.DiscardHandler))
-	p.forward(ctx, caller)
-	if got := p.Counters(); got != (Counters{}) {
-		t.Fatalf("a dial cancelled by shutdown was counted: %+v", got)
+	if got := forwardOnce(ctx, t); got != "" {
+		t.Fatalf("a dial cancelled by shutdown was logged: %q", got)
 	}
 }

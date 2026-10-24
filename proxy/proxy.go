@@ -10,13 +10,11 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
-	"syscall"
 )
 
 // Counters is a snapshot of a Proxy's traffic since it started.
@@ -27,14 +25,6 @@ type Counters struct {
 	// BytesUp is bytes received from callers, BytesDown bytes received from
 	// the upstream.
 	BytesUp, BytesDown int64
-	// DialsRefused, DialsTimedOut and DialsFailed count accepted connections
-	// cut because the upstream dial failed: refused (the host is up but
-	// nothing listens on the port, such as a crashed process in a running
-	// container), timed out (no answer at all), or failed any other way. A
-	// stopped compose service lands in DialsFailed: its name stops
-	// resolving. The caller can't tell these apart; it only sees its
-	// connection close. Dials cut short by shutdown aren't counted.
-	DialsRefused, DialsTimedOut, DialsFailed int64
 }
 
 // Proxy forwards TCP connections to one upstream address.
@@ -42,13 +32,13 @@ type Proxy struct {
 	upstream string
 	log      *slog.Logger
 
-	connections, bytesUp, bytesDown          atomic.Int64
-	dialsRefused, dialsTimedOut, dialsFailed atomic.Int64
+	connections, bytesUp, bytesDown atomic.Int64
 }
 
 // New returns a Proxy that forwards to upstream, a host:port dialled afresh
 // for every accepted connection so the upstream can be restarted underneath
-// it. Dial failures are logged to log.
+// it. Dial failures are logged to log with their cause, since the caller
+// only sees its connection close; dials cut short by shutdown are not.
 func New(upstream string, log *slog.Logger) *Proxy {
 	return &Proxy{upstream: upstream, log: log}
 }
@@ -57,12 +47,9 @@ func New(upstream string, log *slog.Logger) *Proxy {
 // proxy is serving.
 func (p *Proxy) Counters() Counters {
 	return Counters{
-		Connections:   p.connections.Load(),
-		BytesUp:       p.bytesUp.Load(),
-		BytesDown:     p.bytesDown.Load(),
-		DialsRefused:  p.dialsRefused.Load(),
-		DialsTimedOut: p.dialsTimedOut.Load(),
-		DialsFailed:   p.dialsFailed.Load(),
+		Connections: p.connections.Load(),
+		BytesUp:     p.bytesUp.Load(),
+		BytesDown:   p.bytesDown.Load(),
 	}
 }
 
@@ -101,11 +88,9 @@ func (p *Proxy) forward(ctx context.Context, caller net.Conn) {
 	defer caller.Close()
 	upstream, err := (&net.Dialer{}).DialContext(ctx, "tcp", p.upstream)
 	if err != nil {
-		if ctx.Err() != nil {
-			return
+		if ctx.Err() == nil {
+			p.log.Warn("dial upstream", "upstream", p.upstream, "err", err)
 		}
-		p.dialFailure(err).Add(1)
-		p.log.Warn("dial upstream", "upstream", p.upstream, "err", err)
 		return
 	}
 	defer upstream.Close()
@@ -125,19 +110,6 @@ func (p *Proxy) forward(ctx context.Context, caller net.Conn) {
 		if err := <-errc; err != nil {
 			closeBoth()
 		}
-	}
-}
-
-// dialFailure returns the counter for a failed upstream dial.
-func (p *Proxy) dialFailure(err error) *atomic.Int64 {
-	var ne net.Error
-	switch {
-	case errors.Is(err, syscall.ECONNREFUSED):
-		return &p.dialsRefused
-	case errors.As(err, &ne) && ne.Timeout():
-		return &p.dialsTimedOut
-	default:
-		return &p.dialsFailed
 	}
 }
 
