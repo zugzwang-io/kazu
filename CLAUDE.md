@@ -70,9 +70,7 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 
 Superpowers is installed per user, not in the repo, so the rules above stand on their own; these lines only adapt its skills to this repo.
 
-- Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. Brainstorm output becomes a Proposed ADR or a DESIGN.md edit — never `docs/superpowers/`.
-- Implementation plans from `writing-plans` live in the scratchpad or the PR description, not committed. PLAN.md stays the only committed plan.
+- Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. A written design (the architectural path) becomes a Proposed ADR, a DESIGN.md edit, or a SPEC.md edit for shop behaviour — never `docs/superpowers/`. Spike and bounded designs stay in chat.
+- Implementation plans from `writing-plans` are uncommitted files outside the repo. PLAN.md stays the only committed plan.
 - `finishing-a-development-branch`: always push and open a PR; never offer a local merge.
-- Debugging goes through `systematic-debugging`; new behaviour through `test-driven-development`.
-- When a superpowers skill dispatches a code reviewer, use `kazu-pr-reviewer`, not a general-purpose agent.
-- Review: built-in `/code-review` before "ready"; `/review-stack` for the queue; `/verify-foundations` for foundational PRs.
+- Reviewers: keep the skills' own per-task reviewers. The final whole-branch review, and the independent pass before calling any PR ready, is `kazu-pr-reviewer` on the open PR, with its findings fixed.
