@@ -2,11 +2,14 @@
 name: verify-foundations
 description: Independent verification panel — architecture, test coverage, code health, and product reviewers that challenge foundational assumptions, not just the diff. Use when the user wants assumptions challenged or red-teamed, asks "is this the right approach", is about to approve a foundational PR or design, or wants a periodic deep check of the whole tree.
 allowed-tools: Read, Grep, Glob, Bash(gh *), Bash(git *), Bash(go *), Agent, Write, Edit
+# Rare, unhurried and the costliest place to miss a flaw: the most capable
+# model earns its price here.
+model: fable
 ---
 
 Run four independent reviewers whose job is to **challenge, not confirm**. Confirmation is cheap and worthless here — the maintainer invokes this exactly when agreement would be dangerous. Each reviewer gets the same scope (a PR number if given, otherwise the whole tree) but a different mandate, and none sees the others' output until synthesis; independence is what makes four opinions worth more than one.
 
-Spawn all four in a single message (concurrent), each instructed: "Your job is to find the strongest case *against* the current approach. Assume the author is competent and still look for what they missed. Cite file:line or ADR/spec sections for every claim. If after honest effort the foundation holds, say so plainly — do not invent objections."
+Spawn all four in a single message (concurrent), each with `model: fable` (otherwise each runs on its agent definition's model or the session's) and each instructed: "Your job is to find the strongest case *against* the current approach. Assume the author is competent and still look for what they missed. Cite file:line or ADR/spec sections for every claim. If after honest effort the foundation holds, say so plainly — do not invent objections."
 
 1. **Architecture**: do module boundaries, dependency direction, and abstractions still serve the README principles ("a fault-injection and assertion runtime, nothing more", one static binary)? Is anything being built that the next two phases of PLAN.md will force us to unbuild? Check decisions in `docs/adr/` — is any Accepted ADR now wrong?
 2. **Test coverage**: map SPEC.md's test-suite table against tests that actually exist; probe whether existing tests would catch realistic regressions (mutate-in-your-head: name a plausible bug each test misses). Distinguish "untested" from "untestable as designed".

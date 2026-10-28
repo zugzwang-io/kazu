@@ -2,6 +2,9 @@
 name: arch-review
 description: Whole-tree architecture and health review against README principles, SPEC.md, and accepted ADRs — drift, growing complexity, module hygiene, test posture. Use when the user asks for an architecture review, health check, "are we drifting", tech-debt audit, or any state-of-the-codebase question that isn't about one diff.
 allowed-tools: Read, Grep, Glob, Bash(git *), Bash(go *), Agent
+# Rare, unhurried and the costliest place to miss a flaw: the most capable
+# model earns its price here.
+model: fable
 ---
 
 Review the codebase's architecture and health — the current state of the tree, not a diff. The maintainer uses this to catch slow rot that no single PR review can see, so judge trajectories, not snapshots.
