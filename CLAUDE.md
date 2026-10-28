@@ -50,6 +50,7 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - **Follow Antithesis by default.** Where they've made a design decision for the same problem, take it. Deviations are deliberate, flagged **when proposed** (not after), and recorded in DESIGN.md §6.7.
 - **YAGNI.** Don't add features, docs sections, or files nothing needs yet; a spec PR stays a spec.
 - **Fail only on facts** (product principle, DESIGN §2): a missing signal — not exercised, no data, underpowered — is never a pass, and every failure has a config switch.
+- **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus, with its findings fixed, before it is called ready; the agent's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews).
 - **PLAN.md tracks phases against real PR state.** After any PR is opened, updated, merged, or closed — including by you — run `/sync-plan`.
 - **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status. DESIGN.md §11 is the pre-repo decision log; don't relitigate it without new evidence.
 - **`DESIGN.md` (repo root) is the design authority for Kazu itself** — read the relevant section before config, runtime, or product decisions. SPEC.md remains the authority for the shop. Working from Claude's cloud sandbox? Read `docs/sandbox.md` first (blocked proxies, no Docker, REST-only gh).
@@ -65,3 +66,13 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - Tests are load-bearing: before calling a test done, passing or ready for review, show it fails when the code it guards is broken — write it red-first, or mutate the code (revert the fix, shift a boundary, drop a branch) and restore. A test that passes either way doesn't count. Say how each new test was proven in the PR description.
 - Coverage is read, not targeted: before opening or pushing a PR, list the uncovered lines in the changed code (`go test -coverprofile`); each gets a test or a one-line reason it's unreachable. Untested user-facing messages and fallback branches are where bugs hide. No percentage threshold.
 - Code is not done until it is simple: before opening or pushing a PR with nontrivial code, run a simplification pass (built-in `/simplify`, or the pr-review-toolkit `code-simplifier` agent) so code lands self-documenting. Simplification findings in review are fixes to make, not points to debate.
+
+## Plugin workflow (superpowers)
+
+Superpowers is installed per user, not in the repo, so the rules above stand on their own; these lines only adapt its skills to this repo.
+
+- Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. A written design (the architectural path) becomes a Proposed ADR, a DESIGN.md edit, or a SPEC.md edit for shop behaviour — never `docs/superpowers/`. Spike and bounded designs stay in chat.
+- Implementation plans from `writing-plans` are uncommitted files outside the repo. PLAN.md stays the only committed plan.
+- `finishing-a-development-branch`: always push and open a PR; never offer a local merge.
+- Reviewers: keep the skills' own per-task reviewers. The skill's final whole-branch review comes after `finishing-a-development-branch` opens the PR: it is the pre-"ready" `kazu-pr-reviewer` pass above.
+- Subagents that write or fix code (implementers, fix-loop and final-review fixers): Sonnet for well-specified work, even when the plan contains the complete code; Opus for judgement (multi-file integration, debugging); never Haiku — it takes more turns and costs more. Fix rounds 4–5 escalate Sonnet → Opus; a stuck Opus implementer gets a fresh Opus with the report. Always name the model when dispatching.
