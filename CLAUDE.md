@@ -65,3 +65,14 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - Tests are load-bearing: before calling a test done, passing or ready for review, show it fails when the code it guards is broken — write it red-first, or mutate the code (revert the fix, shift a boundary, drop a branch) and restore. A test that passes either way doesn't count. Say how each new test was proven in the PR description.
 - Coverage is read, not targeted: before opening or pushing a PR, list the uncovered lines in the changed code (`go test -coverprofile`); each gets a test or a one-line reason it's unreachable. Untested user-facing messages and fallback branches are where bugs hide. No percentage threshold.
 - Code is not done until it is simple: before opening or pushing a PR with nontrivial code, run a simplification pass (built-in `/simplify`, or the pr-review-toolkit `code-simplifier` agent) so code lands self-documenting. Simplification findings in review are fixes to make, not points to debate.
+
+## Plugin workflow (superpowers)
+
+Superpowers is installed per user, not in the repo, so the rules above stand on their own; these lines only adapt its skills to this repo.
+
+- Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. Brainstorm output becomes a Proposed ADR or a DESIGN.md edit — never `docs/superpowers/`.
+- Implementation plans from `writing-plans` live in the scratchpad or the PR description, not committed. PLAN.md stays the only committed plan.
+- `finishing-a-development-branch`: always push and open a PR; never offer a local merge.
+- Debugging goes through `systematic-debugging`; new behaviour through `test-driven-development`.
+- When a superpowers skill dispatches a code reviewer, use `kazu-pr-reviewer`, not a general-purpose agent.
+- Review: built-in `/code-review` before "ready"; `/review-stack` for the queue; `/verify-foundations` for foundational PRs.
