@@ -73,4 +73,5 @@ Superpowers is installed per user, not in the repo, so the rules above stand on 
 - Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. A written design (the architectural path) becomes a Proposed ADR, a DESIGN.md edit, or a SPEC.md edit for shop behaviour — never `docs/superpowers/`. Spike and bounded designs stay in chat.
 - Implementation plans from `writing-plans` are uncommitted files outside the repo. PLAN.md stays the only committed plan.
 - `finishing-a-development-branch`: always push and open a PR; never offer a local merge.
-- Reviewers: keep the skills' own per-task reviewers. The final whole-branch review, and the independent pass before calling any PR ready, is `kazu-pr-reviewer` on the open PR, with its findings fixed.
+- Reviewers: keep the skills' own per-task reviewers. The final whole-branch review, and the independent pass before calling any PR ready, is `kazu-pr-reviewer` on the open PR, dispatched on Opus (its Sonnet default is for `/review-stack` fan-out), with its findings fixed.
+- Implementer subagents: Sonnet for well-specified plan tasks; Opus for tasks needing judgement (multi-file integration, debugging); never Haiku for code — it takes more turns and costs more. Always name the model when dispatching.
