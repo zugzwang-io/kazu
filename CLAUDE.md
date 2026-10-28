@@ -50,6 +50,7 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - **Follow Antithesis by default.** Where they've made a design decision for the same problem, take it. Deviations are deliberate, flagged **when proposed** (not after), and recorded in DESIGN.md §6.7.
 - **YAGNI.** Don't add features, docs sections, or files nothing needs yet; a spec PR stays a spec.
 - **Fail only on facts** (product principle, DESIGN §2): a missing signal — not exercised, no data, underpowered — is never a pass, and every failure has a config switch.
+- **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus, with its findings fixed, before it is called ready; the agent's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews).
 - **PLAN.md tracks phases against real PR state.** After any PR is opened, updated, merged, or closed — including by you — run `/sync-plan`.
 - **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status. DESIGN.md §11 is the pre-repo decision log; don't relitigate it without new evidence.
 - **`DESIGN.md` (repo root) is the design authority for Kazu itself** — read the relevant section before config, runtime, or product decisions. SPEC.md remains the authority for the shop. Working from Claude's cloud sandbox? Read `docs/sandbox.md` first (blocked proxies, no Docker, REST-only gh).
@@ -73,5 +74,5 @@ Superpowers is installed per user, not in the repo, so the rules above stand on 
 - Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. A written design (the architectural path) becomes a Proposed ADR, a DESIGN.md edit, or a SPEC.md edit for shop behaviour — never `docs/superpowers/`. Spike and bounded designs stay in chat.
 - Implementation plans from `writing-plans` are uncommitted files outside the repo. PLAN.md stays the only committed plan.
 - `finishing-a-development-branch`: always push and open a PR; never offer a local merge.
-- Reviewers: keep the skills' own per-task reviewers. The final whole-branch review, and the independent pass before calling any PR ready, is `kazu-pr-reviewer` on the open PR, dispatched on Opus (its Sonnet default is for `/review-stack` fan-out), with its findings fixed.
-- Implementer subagents: Sonnet for well-specified plan tasks; Opus for tasks needing judgement (multi-file integration, debugging); never Haiku for code — it takes more turns and costs more. Always name the model when dispatching.
+- Reviewers: keep the skills' own per-task reviewers. The skill's final whole-branch review comes after `finishing-a-development-branch` opens the PR: it is the pre-"ready" `kazu-pr-reviewer` pass above.
+- Subagents that write or fix code (implementers, fix-loop and final-review fixers): Sonnet for well-specified work, even when the plan contains the complete code; Opus for judgement (multi-file integration, debugging); never Haiku — it takes more turns and costs more. Fix rounds 4–5 escalate Sonnet → Opus; a stuck Opus implementer gets a fresh Opus with the report. Always name the model when dispatching.

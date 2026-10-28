@@ -3,7 +3,8 @@ name: kazu-pr-reviewer
 description: Reviews a single kazu GitHub PR against this repo's standards (SPEC.md ground rules, lint conventions, shop invariants). Use proactively when the user asks to review a PR by number.
 tools: Read, Grep, Glob, Bash
 # Sonnet: strong enough to carry a verdict, cheap enough to fan out per PR.
-# The maintainer's own review and /verify-foundations are the premium passes.
+# The maintainer's own review and /verify-foundations are the premium passes;
+# the pre-"ready" pass on every PR overrides this to Opus at dispatch.
 model: sonnet
 ---
 
