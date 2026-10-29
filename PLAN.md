@@ -15,7 +15,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 | Compose driver; sealed, fresh system per trial | Kubernetes (K3s) driver → Phase 7 (v1.1) |
 | Faults: `latency`, `down`, `blackhole`, `reset`, `bandwidth`, `errors`, `timeout`, `crash`, `pause`, `cpu`, `memory`, `disk_full`; wall-clock and request-count triggers | Kernel-level partitions, in-code SDK fault points → not planned |
 | Default checks: setup facts, crashes, exits, traffic exit, landed, no-data; regression defaults on user-facing edges; opt-in language log checks | Traces as evidence → Phase 10 |
-| Checks: Python, TypeScript and Go SDK images with `@after`/`@eventually`; one-line `sql`, `http`, `recovers`, `no_regression`, `slo`, `metric` | Java/Kotlin, Ruby SDKs → community, after v1 |
+| Checks: Python, TypeScript and Go SDK images with `@after`/`@eventually`/`@sometimes`; one-line `sql`, `sometimes`, `http`, `recovers`, `no_regression`, `slo`, `metric` | Java/Kotlin, Ruby SDKs → community, after v1 |
 | OTLP receiver, per-trial metric store, PromQL | — |
 | Verdict: trial pairs, per-run noise, adaptive trials, underpowered, flaky, false-discovery control | History-informed starting trial count → Phase 8 |
 | Static shards + `merge`; GitHub Action; PR comment; JUnit/Markdown/JSON; OTLP/S3/webhook sinks | Coordinator, dynamic workers, skip-unchanged, Kubernetes runner → Phase 8 (v1.2) |

@@ -353,7 +353,8 @@ scenarios:
   double-click:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }   # env vars per service, passed through untouched
     checks:
-      - sometimes: { on: postgres, query: "select order_id from charges limit 1" }   # some charge exists, so no-double-charge proved something
+      - name: some_charge                # some charge exists, so no-double-charge proved something
+        sometimes: { on: postgres, query: "select order_id from charges limit 1" }
   browse-under-outage:
     env: { traffic: { FLOW: browse, RATE: "50" } }
     faults:
@@ -394,7 +395,7 @@ gate:                                 # not in the schema yet (joins with Phase 
   fail_on: regression                 # or: violation
   trials: auto                        # adaptive; or a fixed number
   flaky: warn
-  not_exercised: fail                 # a fault that never landed is not a pass
+  not_exercised: fail                 # a fault that never landed, or a situation never seen, is not a pass
   no_data: fail                       # a metric with no samples is not a pass
   underpowered: warn                  # a comparison too noisy to decide is reported, not guessed
 ```
@@ -509,8 +510,8 @@ It works on any proxy measurement (`p99`, `error_rate`) and, as `within:`, on an
 
 One list holds every user check, and runs in every scenario. A scenario can add its own `checks:` (same entries), run on top of the top-level list in that scenario only, for checks that mean something only under its faults; names can't repeat a top-level check's. Each entry may have a `name:` (used in output; one-line checks are otherwise named after their kind and position for now; stable ids for history are decided with run records) and is one of:
 - **`image:`** — code checks, as a compose-style service using a Kazu SDK image (below);
-- **`sql:`** — a query that selects violations; it passes when it returns no rows. Kazu reads only the first few rows (for the failure message) under a statement timeout. Exact-row comparisons belong in a code check;
-- **`sometimes:`** — a query that selects evidence a situation happened (a charge was made, the reconciler re-sent); it holds on a side when it returns a row in at least one of that side's trials. False in every trial on base and head is **not exercised**, never a pass; true on base and less often on head is judged by the base-vs-head comparison like any check. `sql:` and `http:` pass when what they guard never happened, so each table a `sql:` check reads gets a `sometimes:` in the scenarios whose traffic writes it. `not_exercised: warn` on the entry downgrades it, and wins over the scenario's and the gate's setting;
+- **`sql:`** — a query that selects violations; it passes when it returns no rows, including when what it guards never happened, so pair it with a `sometimes:` (Kazu's templates do). Kazu reads only the first few rows (for the failure message) under a statement timeout. Exact-row comparisons belong in a code check;
+- **`sometimes:`** — a query that selects evidence a situation happened (a charge was made, the reconciler re-sent); it holds on a side when it returns a row in at least one of that side's trials. False in every trial on base and head is **not exercised**, never a pass; true on base and less often on head is judged by the base-vs-head comparison like any check. It goes in the `checks:` of the scenarios whose traffic produces the situation. Adaptive trials keep adding pairs while it has no true trial, and `gate.fail_on` doesn't apply to it. `not_exercised: warn` on the entry downgrades it, and wins over the scenario's and the gate's setting. A scenario is REGRESSED if any check regressed, otherwise not exercised if any check or fault was;
 - **`http:`** — a request and the expected status or body;
 - **`recovers:`** — a service's error rate back to its pre-fault level `within` a duration;
 - **`no_regression:`** — a proxy measurement no worse than base `within` a tolerance;
@@ -539,7 +540,7 @@ There are no checks during the fault window (no `@during`): every failure the sh
 **SDK images.** Kazu publishes one image per SDK language with the SDK preinstalled (`kazu-python`, `kazu-node`, `kazu-go`). The customer's files are mounted in with `volumes:`, so the simple case needs no build; checks that need extra libraries use an image built `FROM` Kazu's.
 
 **How SDKs stay thin:** Kazu starts the checks container with stdin and stdout attached and speaks JSON-RPC over them.
-- Host → worker: `initialize`, `list` (names and timings), `check {name}`.
+- Host → worker: `initialize`, `list` (names, kinds and timings), `check {name}`.
 - Worker → host: `result {pass, message}`.
 - Worker → host callbacks: `sql`, `http`, `metrics` (PromQL), `log`. **Kazu does the real work**, using `connections:` and its own metric store, so the checks container needs no database drivers, no HTTP clients, no credentials and no access to the system's network.
 - **One Protobuf schema is the source of truth for the protocol.** `buf generate` produces the message types for every SDK language; messages travel as Protobuf's standard JSON encoding. Only the decorators and the stdio loop are hand-written per language, roughly 200–400 lines per SDK.
