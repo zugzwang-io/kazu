@@ -234,7 +234,7 @@ Configs written for the test (in `safety/`), each targeting one of Kazu's own me
 
 | # | Base | Head | Scenario | Expected | Tests | Step |
 |---|---|---|---|---|---|---|
-| S1 | trap `PAYMENTS_BY_IP` | `RETRY_NEW_KEY` + trap `PAYMENTS_BY_IP` | latency on `checkout -> payments` | **not exercised**, never `pass` | The landed check: no false pass when a fault can't land | 1 |
+| S1 | trap `PAYMENTS_BY_IP` | `SHOP_NOOP=1` (interpolated into checkout, read by no code, so head's system differs from base's) + trap `PAYMENTS_BY_IP` | latency on `checkout -> payments` | **not exercised**, never `pass` | The landed check: no false pass when a fault can't land | 1 |
 | S2 | — | — | `down` on `payments -> postgres` only | `pass`; proxy counters show checkout's database traffic untouched | Per-edge routing: one caller's alias doesn't leak to another | 1 |
 | S3 | — | — | an `after_requests` trigger on `checkout -> postgres` (TCP) | **config error** before any trial | Request-count triggers are rejected on TCP edges | 1 |
 | S14 | — | `TIMEOUT_AS_FAILURE` | `payments_slow` | `REGRESSED`, caught by the "failed order with a charge" `sql` check | Base vs head: a check that passes on base and fails on head is a regression, so a Kazu that passes everything fails the gate | 1 |
@@ -305,7 +305,7 @@ A separate Go module keeps the services' dependencies out of Kazu's `go.mod`, an
 | Step | Shop adds | Rows |
 |---|---|---|
 | 1 | `checkout` (with reconciler), `payments` (with shedding), `postgres`, `fakestripe`, schema, compose, the shop test suite; `load/traffic.js` with the Kazu config; `PAYMENTS_BY_IP` trap with the e2e gate | V0, S1–S3, S14 |
-| 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC); the per-flag test run; redesign or replace `RETRY_NEW_KEY` and `TIMEOUT_AS_FAILURE`, which the integration suite catches (V1, V2 and the quickstart use them; mechanics rows S1, S4 and S12 can keep them, since those rows test Kazu, not the bug) | V1, V2 |
+| 2 | `kazu.yaml` + `checks/shop.py`; `fraud` (gRPC); the per-flag test run; redesign or replace `RETRY_NEW_KEY` and `TIMEOUT_AS_FAILURE`, which the integration suite catches (V1, V2 and the quickstart use them; mechanics rows S4 and S12 can keep them, since those rows test Kazu, not the bug) | V1, V2 |
 | 3 | `NO_DEADLINE_PROPAGATION`, `SHARED_POOL`, `RACE_P`, `NO_SHEDDING`, `SCHEMA_V2` trap, `expectations.yaml` asserter | V3, V6, V9, V10, S4–S9 |
 | 4 | `worker`, `rabbitmq`, `otel-collector` and telemetry, `UNBOUNDED_RETRY_QUEUE`, `RETRY_NO_BACKOFF`, `POOL_LEAK`, `NO_RECONNECT`, `ACK_BEFORE_WRITE`, `REQUEUE_FOREVER`, `NO_OTEL` trap, `k8s/rendered/` | V4, V5, V7, V8, V11, V12, S10–S13 |
 
