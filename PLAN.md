@@ -1,8 +1,8 @@
 # Kazu build plan
 
-Phased plan toward DESIGN.md's build order (§8). **Maintained automatically**: agents run `/sync-plan` whenever PR state changes (opened, updated, merged, closed); humans edit the phase structure, agents keep statuses true. Status comes from real PR/merge state, never aspiration.
+Phased plan toward DESIGN.md's build order (§8). **The plan tracks the product**: PRs that only change the dev setup — agent instructions, repo tooling and bot workflows, this note and the legend — get no line; git history is their record. A PR an existing bullet describes is always tracked. **Each PR keeps its own line true**: a PR marks its own bullet `[x] #N` (adding it under the right phase if the plan has none) and edits no line carrying another open PR's number, so the plan on main is true the moment a PR merges and no PR rewrites another's status. PRs that add lines at the same spot can still collide; that's a keep-both rebase. Work in review shows in the session brief and `gh pr list`, not here. `/sync-plan` does the marking and catches drift; humans edit the phase structure. Status comes from real PR/merge state, never aspiration.
 
-Legend: `[x]` merged · `[~]` in review · `[ ]` not started
+Legend: `[x]` merged · `[ ]` not started
 
 Every bullet from Phase 3 on is **one PR**: small enough to review in one sitting, with its tests, stacked on the bullet above it unless noted. A bullet that turns out to need two PRs is split in the plan first.
 
@@ -23,33 +23,14 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 | GoReleaser: binaries, brew, Docker image, installer; npm + PyPI `kazu-cli`; SDK images on GHCR | Hosted lanes → Phase 10 |
 | Terminal, PR comment and Markdown summary as the only UIs | Web UI, control plane, consumer contracts, AI → Phase 9 (paid v1) |
 
-## Phase 0 — Spec and CI foundations
+## Phase 0 — Spec, design and CI foundations
 
 - [x] Shop spec and ground-truth matrix (#1, #3)
-- [x] PR workflows split by trigger, repo-wide lint (#8, #10)
-- [x] #18 CI on every PR (stacked PRs get checks; shop jobs always report so they can be required)
-- [x] #19 Claude Code setup committed: CLAUDE.md, this plan, ADRs, agents, skills, hooks
-- [x] Ruleset step 1: require lint (.) + lint (examples/shop) (2026-10-14)
-- [x] #20 merge-cleanup hook: auto-delete merged branches/worktrees, pull main
-- [x] #21 Claude GitHub App: @claude responder + auto-review workflows
-- [x] #22 reviews scoped to PRs into main; CI-failure fixer workflow
-- [x] #23 test job for the root module (extracted from #13 so the ruleset needn't wait on config review)
-- [x] Ruleset step 2: all five checks required on main (2026-10-15); gate complete
-- [x] #24 wire plugin reviewers into skills; simplification joins definition-of-done
-- [x] #25 skill-creator pass over .claude/skills/ (triggering, rationale, operational lessons)
-- [x] #26 DESIGN.md folded into the repo from the claude.ai project; 15 stale branches deleted (2026-10-15)
-- [x] #27 Platform plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch
-- [x] #28 model tiering for agent flows: reviewers on sonnet, mechanical sync on haiku, verify-foundations stays premium
-- [x] #29 CLAUDE.md: code never cites markdown docs (comments, docstrings, schema descriptions, fixtures)
-- [x] #30 CLAUDE.md: read uncovered lines before a PR; no coverage threshold
-- [x] #31 docs: ADR-0002 and ADR-0004 accepted, config decisions folded into DESIGN.md
-- [x] #32 plan: Phase 3 derisked after the 2026-10-16 foundations review (S14, networking spike, slice order, ADR-0003 accepted, ADR-0005 proposed)
-- [x] #37 adr: the planner rejects config it can't run yet (ADR-0007); traffic decides its own length, Kazu caps a trial at 30 min (ADR-0006)
-- [x] #38 config: scenario `duration:` removed (ADR-0006)
-- [x] #39 docs: ADR-0005 accepted with the spike's findings; follow-ups for #37/#38
-- [x] #40 CLAUDE.md: tests must be shown load-bearing before they count
-- [~] #42 CLAUDE.md: superpowers plugin skills adapted to the repo workflow (doc locations, PR-only integration, kazu-pr-reviewer)
-- [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
+- [x] CI gate: lint and tests on every PR, stacked PRs included; all five checks required on main (#8, #10, #18, #23; rulesets 2026-10-14 and 2026-10-15)
+- [x] DESIGN.md in the repo, and this plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch (#19, #26, #27)
+- [x] Config decisions: ADR-0002 and ADR-0004 accepted and folded into DESIGN.md (#31); the planner rejects config it can't run yet (ADR-0007) and traffic decides its own length, capped at 30 min (ADR-0006) (#37); scenario `duration:` removed (#38)
+- [x] Phase 3 derisked by the 2026-10-16 foundations review: S14, networking spike, slice order, ADR-0003 accepted (#32); ADR-0005 accepted with the spike's findings, with follow-ups to ADR-0004/0006 (#39)
+- [ ] Pre-public pass: decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home); generalize "Varun" → "the maintainer" in the repo's agent instructions
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
 ## Phase 1 — Shop, build step 1 (the system Kazu is built against) ✅
