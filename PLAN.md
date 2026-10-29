@@ -231,6 +231,8 @@ Traces as evidence (same receiver, span-structure checks); org registry of stand
 
 Ideas gathered from Toxiproxy, netem/Pumba, Envoy/Istio/gRPC fault injection, Chaos Mesh, Litmus, Gremlin, Steadybit, AWS FIS, Antithesis, Jepsen and FoundationDB (survey of 2026-10-28). Unordered within a group; nothing here is scheduled. An item moves into a phase as its own bullet when it is picked up.
 
+- [x] #49 survey of comparable tools recorded as this backlog
+
 **Network faults (proxy)**
 - `limit_data`: cut the connection after N bytes — truncated responses accepted as complete.
 - `slicer`: split writes into small chunks — framing and partial-read bugs.
