@@ -48,8 +48,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #38 config: scenario `duration:` removed (ADR-0006)
 - [x] #39 docs: ADR-0005 accepted with the spike's findings; follow-ups for #37/#38
 - [x] #40 CLAUDE.md: tests must be shown load-bearing before they count
-- [x] #42 CLAUDE.md: superpowers skills adapted to the repo workflow (doc locations, PR-only integration, kazu-pr-reviewer); pre-ready review on Opus, model tiers for code-writing subagents
-- [~] #43 deep reviews (/verify-foundations, /arch-review) on Fable at max effort, outside the feature loop: trajectory and next-phase checks, an outside-view lens, and an agent-setup consistency audit
+- [~] #42 CLAUDE.md: superpowers plugin skills adapted to the repo workflow (doc locations, PR-only integration, kazu-pr-reviewer)
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
