@@ -253,7 +253,6 @@ What working backwards from the screens changed or confirmed:
 ## Open decisions
 
 - **Latency fault — delay request, response, or both?** Claude's proposal: both directions per chunk, like real network latency. Decide in proxy 2/5; record in SPEC.md.
-- **Row S1 uses `RETRY_NEW_KEY`, a step-2 flag, but gates in Phase 3**: use any head-differs-from-base variable for S1 in Phase 3, or move S1 to Phase 4.
 - **Spikes before committing** (DESIGN §8): the verdict method before Phase 5's stats work; K3s on GitHub-hosted runners before Phase 7.
 
 Resolved since the old plan: CI on stacked PRs (#18); the schema decisions (ADR-0002's 14, plus ADR-0004's relative triggers, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14).
