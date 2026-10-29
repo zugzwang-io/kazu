@@ -83,8 +83,8 @@ Superpowers drives a feature from idea to PR; the rules above say what each phas
 | Review feedback (`receiving-code-review`) | Push back with reasoning when a finding is wrong; Varun decides. |
 
 Models — always name one when dispatching a subagent:
-- Code-writing subagents (implementers, fix-loop and final-review fixers): Sonnet for well-specified work, even when the plan contains the complete code; Opus for judgement (multi-file integration, debugging); never Haiku, which takes more turns and costs more. Fix rounds 4–5 escalate Sonnet → Opus; a stuck Opus implementer gets a fresh Opus with the report.
-- Per-task reviewers and re-reviewers: Sonnet; Opus when the task's implementer needed Opus.
+- Code-writing subagents (implementers, fix-loop and final-review fixers): Opus — at about twice Sonnet's price it costs fewer turns and fix rounds, and a missed bug here costs the maintainer's review time. Sonnet only for mechanical changes whose exact code the plan already contains (a rename, a one-line fix); never Haiku. Fix rounds 4–5 go to a fresh Opus with the report.
+- Per-task reviewers and re-reviewers: Opus; Sonnet for a mechanical task.
 - Design and architecture subagents: Fable. The final review is not one of these; it runs on Opus per Working agreements.
 
 Outside the loop:
