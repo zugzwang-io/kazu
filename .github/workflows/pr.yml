@@ -41,3 +41,52 @@ jobs:
           # golangci-lint.run, which times out now and then. The linter still
           # parses the config and fails on a broken one.
           verify: false
+
+  # Advisory: benchmarks the proxy on the PR's base and head and posts a
+  # benchstat comparison to the job summary. Numbers never fail the PR, only
+  # a benchmark that doesn't build or run does. Base and head runs alternate
+  # so drift on the runner hits both alike.
+  bench:
+    name: bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: head
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: head/go.mod
+          cache: false
+      - run: go install golang.org/x/perf/cmd/benchstat@v0.0.0-20260209182753-b57e4e371b65
+      - name: Benchmark base and head
+        # Named explicitly so bash runs with pipefail and a failing go test
+        # isn't hidden behind tee.
+        shell: bash
+        run: |
+          dirs="base head"
+          if ! grep -qs '^func Benchmark' base/proxy/*_test.go; then
+            dirs="head"
+          fi
+          for _ in 1 2 3 4 5 6; do
+            for d in $dirs; do
+              (cd "$d" && go test -run NONE -bench . -count 1 ./proxy/) | tee -a "$d.txt"
+            done
+          done
+          {
+            if [ "$dirs" = head ]; then
+              echo "The base has no proxy benchmarks, so there is no base vs head comparison."
+            else
+              echo "### Base vs head"
+              echo '```'
+              benchstat base=base.txt head=head.txt
+              echo '```'
+            fi
+            echo "### Head: direct vs proxied"
+            echo '```'
+            benchstat -col /path head.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
