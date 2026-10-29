@@ -1,6 +1,6 @@
 # Kazu build plan
 
-Phased plan toward DESIGN.md's build order (§8). **Each PR keeps its own line true**: a PR marks its own bullet `[x] #N` (adding it under the right phase if the plan has none) and edits no line another open PR owns, so the plan on main is true the moment a PR merges and parallel PRs don't collide. Work in review shows in the session brief and `gh pr list`, not here. `/sync-plan` does the marking and catches drift; humans edit the phase structure. Status comes from real PR/merge state, never aspiration.
+Phased plan toward DESIGN.md's build order (§8). **Each PR keeps its own line true**: a PR marks its own bullet `[x] #N` (adding it under the right phase if the plan has none) and edits no line carrying another open PR's number, so the plan on main is true the moment a PR merges and no PR rewrites another's status. PRs that add lines at the same spot can still collide; that's a keep-both rebase. Work in review shows in the session brief and `gh pr list`, not here. `/sync-plan` does the marking and catches drift; humans edit the phase structure. Status comes from real PR/merge state, never aspiration.
 
 Legend: `[x]` merged · `[ ]` not started
 
@@ -48,7 +48,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #38 config: scenario `duration:` removed (ADR-0006)
 - [x] #39 docs: ADR-0005 accepted with the spike's findings; follow-ups for #37/#38
 - [x] #40 CLAUDE.md: tests must be shown load-bearing before they count
-- [~] #42 CLAUDE.md: superpowers plugin skills adapted to the repo workflow (doc locations, PR-only integration, kazu-pr-reviewer)
+- [x] #42 CLAUDE.md: superpowers skills adapted to the repo workflow (doc locations, PR-only integration, kazu-pr-reviewer); pre-ready review on Opus, model tiers for code-writing subagents
 - [x] #45 plan: each PR marks its own line (`[~]` leaves the legend), /sync-plan fixes drift only on unowned lines; /babysit restacks with `rebase --update-refs`
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
