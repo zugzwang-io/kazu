@@ -193,6 +193,7 @@ K3s moves out of DESIGN §8 step 4 so v1.0 ships compose-only ([ADR-0003](docs/a
 
 ## Phase 8 — Smart parallelism (v1.2; DESIGN §8 step 5)
 
+- [x] #54 ADR-0010 (Proposed): every scenario runs on every run; content addressing pins inputs for replay and never skips a scenario
 - [ ] plan: content-hashed plan (`plan_hash` per scenario); identical base/head hashes skip the scenario
 - [ ] coordinator protocol: `kazu.coord.v1` Connect — lease a trial pair, expiry, report results
 - [ ] `kazu coordinator`: self-hosted, single process, state in SQLite
