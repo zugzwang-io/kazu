@@ -51,7 +51,7 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - **YAGNI.** Don't add features, docs sections, or files nothing needs yet; a spec PR stays a spec.
 - **Fail only on facts** (product principle, DESIGN §2): a missing signal — not exercised, no data, underpowered — is never a pass, and every failure has a config switch.
 - **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus, with its findings fixed, before it is called ready; the agent's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews).
-- **PLAN.md is true on main by construction.** Each product PR marks its own bullet `[x] #N` and edits no line another open PR owns; setup-only PRs (agent instructions, repo tooling) get no line. Run `/sync-plan` after opening or updating a PR, and after merges to catch drift.
+- **PLAN.md is true on main by construction.** Each product PR marks its own bullet `[x] #N` and edits no line another open PR owns; setup-only PRs (agent instructions, repo tooling, plan housekeeping) get no line, but a PR an existing bullet describes is always tracked. Run `/sync-plan` after opening or updating a PR, and after merges to catch drift.
 - **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status. DESIGN.md §11 is the pre-repo decision log; don't relitigate it without new evidence.
 - **`DESIGN.md` (repo root) is the design authority for Kazu itself** — read the relevant section before config, runtime, or product decisions. SPEC.md remains the authority for the shop. Working from Claude's cloud sandbox? Read `docs/sandbox.md` first (blocked proxies, no Docker, REST-only gh).
 
