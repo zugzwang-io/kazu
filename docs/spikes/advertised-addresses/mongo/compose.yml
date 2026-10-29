@@ -1,0 +1,31 @@
+# Three-member replica set; init.js registers members by name or by IP (MODE).
+x-node: &node
+  image: mongo:7.0
+  command: [mongod, --replSet, rs0, --bind_ip_all]
+  healthcheck: { test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"], interval: 3s, retries: 30 }
+x-proxy: &proxy
+  image: kazu-spike-proxy
+  pull_policy: never
+services:
+  mongo-1: { <<: *node, networks: { core: { ipv4_address: 10.77.0.11 } } }
+  mongo-2: { <<: *node, networks: { core: { ipv4_address: 10.77.0.12 } } }
+  mongo-3: { <<: *node, networks: { core: { ipv4_address: 10.77.0.13 } } }
+  init:
+    image: mongo:7.0
+    networks: [core]
+    environment: { MODE: "${MODE}" }
+    volumes: [./init.js:/init.js:ro]
+    depends_on: { mongo-1: { condition: service_healthy }, mongo-2: { condition: service_healthy }, mongo-3: { condition: service_healthy } }
+    command: [mongosh, --quiet, --host, mongo-1, /init.js]
+  px-1: { <<: *proxy, command: [proxy, -listen, ":27017", -upstream, "mongo-1:27017"], networks: { core: {}, edge: { ipv4_address: 10.77.1.11 } } }
+  px-2: { <<: *proxy, command: [proxy, -listen, ":27017", -upstream, "mongo-2:27017"], networks: { core: {}, edge: { ipv4_address: 10.77.1.12 } } }
+  px-3: { <<: *proxy, command: [proxy, -listen, ":27017", -upstream, "mongo-3:27017"], networks: { core: {}, edge: { ipv4_address: 10.77.1.13 } } }
+  client:
+    image: mongo:7.0
+    entrypoint: ["sleep", "infinity"]
+    volumes: [./workload.js:/workload.js:ro]
+    networks: [edge]
+    extra_hosts: ["mongo-1:10.77.1.11", "mongo-2:10.77.1.12", "mongo-3:10.77.1.13"]
+networks:
+  core: { ipam: { config: [{ subnet: 10.77.0.0/24 }] } }
+  edge: { internal: true, ipam: { config: [{ subnet: 10.77.1.0/24 }] } }
