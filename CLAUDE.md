@@ -87,4 +87,4 @@ Models — always name one when dispatching a subagent:
 
 Outside the loop:
 - `/verify-foundations` and `/arch-review` run on demand, on Fable at max effort. The loop suggests them, never runs them: when a design produces an ADR, on a foundational PR (schema, protocol, the first of a stack), and when a PLAN.md phase completes.
-- `/review-stack`, `/babysit` and `/sync-plan` work the PR queue, not a single feature.
+- `/review-stack` and `/babysit` work the PR queue, not a single feature; `/sync-plan` runs in Finish and after merges.
