@@ -64,7 +64,7 @@ Networking (derisk first):
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 
-- [~] #41 proxy 1/5: TCP forwarder with connection and byte counters; `kazu proxy` subcommand
+- [x] #41 proxy 1/5: TCP forwarder with live connection and byte counters; `kazu proxy` subcommand
 - [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in both directions, seeded; records the open latency decision in SPEC.md
 - [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`
 - [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; applied-fault counters for the landed check
@@ -75,7 +75,7 @@ Driver (compose):
 
 - [ ] driver 1/4: load the system with compose-go — services, healthchecks, one-shot jobs (`service_completed_successfully`), `--base`/`--head` variable interpolation
 - [ ] driver 2/4: project rewrite — a proxy service per declared edge, `extra_hosts` on the caller only, a project name per trial; the trial network, static proxy IPs, port removal, subnet retry and the helper as ADR-0005's Consequences list
-- [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED` and the scenario's `env`, wait for exit, stopping a trial still running after 30 min (*not exercised*, [ADR-0006](docs/adr/0006-traffic-decides-its-length.md)), delete
+- [ ] driver 3/4: lifecycle — up, ready (every healthcheck passing, every one-shot exited 0, with a timeout that is an error), start traffic with `KAZU_SEED` and the scenario's `env`, wait for exit, stopping a trial still running after 30 min (*not exercised*, [ADR-0006](docs/adr/0006-traffic-decides-its-length.md)), save the logs of every Kazu container (proxies, helper) before delete
 - [ ] driver 4/4: trial plan — scenarios × {base, head}; rejects any config field the runtime doesn't implement yet, naming it ([ADR-0007](docs/adr/0007-the-planner-rejects-what-it-cant-run.md))
 - [ ] controller: pushes programs to proxies, starts their clocks at traffic start, collects counters; the landed check turns a fault that never applied into **not exercised** with its reason
 
@@ -119,7 +119,7 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 - [ ] plan: resolve fault anchors (`from`, joins) into times (ADR-0004)
 - [ ] faults on a service: network faults on every declared inbound edge of the service
 - [ ] scenarios: a scenario's `traffic:` override, merged over the default traffic
-- [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan + per-trial results + proxy counters; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
+- [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan + per-trial results + proxy counters + where each trial's Kazu container logs are; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
 - [ ] `kazu replay <run-id> [--trial N]`
 - [ ] shop: `fraud` gRPC service, payments calls it for orders ≥ 1,000 cents (business rule 6), integration tests
 - [ ] shop: full `kazu.yaml` and `checks/shop.py`; scenarios Kazu can't run yet marked skipped in `expectations.yaml`
