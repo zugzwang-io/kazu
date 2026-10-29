@@ -16,27 +16,27 @@ else
 fi
 
 # Merged means GitHub says the branch's PR merged and the local tip holds nothing
-# beyond it. Ancestry alone isn't enough: a branch just cut from main is an
-# ancestor of main too. No PR, or gh unreachable, means keep.
+# beyond that PR's head. Ancestry of main isn't enough: a branch just cut from
+# main, even one reusing a merged PR's name, is an ancestor of main too. No PR,
+# or gh unreachable, means keep. Evidence branches are never deleted.
 merged() {
   local b=$1 state head tip
+  case $b in main | spike-network | spike-network-work | spike-noise) return 1 ;; esac
   read -r state head < <(gh pr view "$b" --json state,headRefOid --jq '.state + " " + .headRefOid' 2>/dev/null)
   [ "$state" = "MERGED" ] || return 1
   tip=$(git rev-parse "refs/heads/$b") || return 1
-  [ "$tip" = "$head" ] || git merge-base --is-ancestor "$tip" origin/main
+  [ "$tip" = "$head" ] || git merge-base --is-ancestor "$tip" "$head" 2>/dev/null
 }
 
 # `worktree remove` refuses dirty worktrees.
 git worktree list --porcelain | awk '/^worktree /{wt=$2} /^branch /{print wt, $2}' |
 while read -r wt ref; do
   b=${ref#refs/heads/}
-  [ "$b" = "main" ] && continue
   merged "$b" && git worktree remove "$wt" 2>/dev/null && echo "merge-cleanup: removed worktree $wt ($b)"
 done
 git worktree prune 2>/dev/null
 
 for b in $(git for-each-ref --format='%(refname:short)' refs/heads/); do
-  [ "$b" = "main" ] && continue
   merged "$b" && git branch -D "$b" >/dev/null 2>&1 && echo "merge-cleanup: deleted merged branch $b"
 done
 exit 0
