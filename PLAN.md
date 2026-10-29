@@ -1,8 +1,8 @@
 # Kazu build plan
 
-Phased plan toward DESIGN.md's build order (§8). **Maintained automatically**: agents run `/sync-plan` whenever PR state changes (opened, updated, merged, closed); humans edit the phase structure, agents keep statuses true. Status comes from real PR/merge state, never aspiration.
+Phased plan toward DESIGN.md's build order (§8). **Each PR keeps its own line true**: a PR marks its own bullet `[x] #N` (adding it under the right phase if the plan has none) and edits no line another open PR owns, so the plan on main is true the moment a PR merges and parallel PRs don't collide. Work in review shows in the session brief and `gh pr list`, not here. `/sync-plan` does the marking and catches drift; humans edit the phase structure. Status comes from real PR/merge state, never aspiration.
 
-Legend: `[x]` merged · `[~]` in review · `[ ]` not started
+Legend: `[x]` merged · `[ ]` not started
 
 Every bullet from Phase 3 on is **one PR**: small enough to review in one sitting, with its tests, stacked on the bullet above it unless noted. A bullet that turns out to need two PRs is split in the plan first.
 

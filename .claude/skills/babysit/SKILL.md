@@ -15,7 +15,7 @@ Keep the open PRs healthy without the maintainer babysitting them. You may fix a
    - Make the fix, run the relevant tests and lint locally until green.
    - Commit with a message naming the CI failure it fixes, push to the PR branch.
 5. Stacked PRs whose base isn't main get no CI by design for review workflows — but lint and tests do run (pr.yml triggers on every PR). If a stacked PR shows no checks at all, run lint + `go test` locally for the touched module and report the result.
-6. Stack maintenance: if a lower PR gained commits, check whether PRs based on it now conflict (`mergeable` field); rebase upward branches bottom-up and push with `--force-with-lease` — only branches belonging to open PRs in this stack — and report exactly what was rebased.
+6. Stack maintenance: if a lower PR gained commits or merged, check whether PRs based on it now conflict (`mergeable` field), and restack the whole stack in one rebase from its top branch with `git -c rerere.enabled=true rebase --update-refs`, which moves every intermediate branch with it and replays conflict resolutions already made. After a squash merge, drop the squashed commits with `--onto origin/main <merged PR's headRefOid>` (`gh pr view N --json headRefOid`). Push every moved branch with `--force-with-lease` — only branches belonging to open PRs in this stack — and report exactly what was rebased.
 7. Run `/sync-plan` so PLAN.md reflects any state changes you caused.
 8. Report per PR: checks state, what was fixed/pushed/rebased, and what still needs the maintainer (approvals, decisions, red checks you couldn't fix and why).
 
