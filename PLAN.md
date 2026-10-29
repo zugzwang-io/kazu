@@ -30,6 +30,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] DESIGN.md in the repo, and this plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch (#19, #26, #27)
 - [x] Config decisions: ADR-0002 and ADR-0004 accepted and folded into DESIGN.md (#31); the planner rejects config it can't run yet (ADR-0007) and traffic decides its own length, capped at 30 min (ADR-0006) (#37); scenario `duration:` removed (#38)
 - [x] Phase 3 derisked by the 2026-10-16 foundations review: S14, networking spike, slice order, ADR-0003 accepted (#32); ADR-0005 accepted with the spike's findings, with follow-ups to ADR-0004/0006 (#39)
+- [x] #51 DESIGN §6.7 Antithesis alignment checked against Antithesis's docs: claims corrected, unrecorded deviations recorded
 - [ ] Pre-public pass: decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home); generalize "Varun" → "the maintainer" in the repo's agent instructions
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
