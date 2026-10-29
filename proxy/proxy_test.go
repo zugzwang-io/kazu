@@ -13,7 +13,7 @@ import (
 	"github.com/zugzwang-io/kazu/proxy"
 )
 
-func listen(t *testing.T) net.Listener {
+func listen(t testing.TB) net.Listener {
 	t.Helper()
 	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -25,7 +25,7 @@ func listen(t *testing.T) net.Listener {
 
 // serve starts handle on a local listener, one goroutine per connection, and
 // returns the listener's address.
-func serve(t *testing.T, handle func(net.Conn)) string {
+func serve(t testing.TB, handle func(net.Conn)) string {
 	t.Helper()
 	ln := listen(t)
 	go func() {
@@ -51,7 +51,7 @@ func echo(c net.Conn) {
 
 // startProxy runs a Proxy to upstream until the test ends and returns it with
 // its address.
-func startProxy(t *testing.T, upstream string) (*proxy.Proxy, string) {
+func startProxy(t testing.TB, upstream string) (*proxy.Proxy, string) {
 	t.Helper()
 	ln := listen(t)
 	p := proxy.New(upstream, slog.New(slog.DiscardHandler))
@@ -66,7 +66,7 @@ func startProxy(t *testing.T, upstream string) (*proxy.Proxy, string) {
 }
 
 // waitServe fails the test unless Serve, already cancelled, returns nil soon.
-func waitServe(t *testing.T, done <-chan error) {
+func waitServe(t testing.TB, done <-chan error) {
 	t.Helper()
 	select {
 	case err := <-done:
