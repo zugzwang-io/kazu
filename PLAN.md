@@ -298,6 +298,8 @@ What working backwards from the screens changed or confirmed:
 
 - **Latency fault — delay request, response, or both?** Claude's proposal: both directions per chunk, like real network latency. Decide in proxy 2/5; record in SPEC.md.
 - **Row S1 uses `RETRY_NEW_KEY`, a step-2 flag, but gates in Phase 3**: use any head-differs-from-base variable for S1 in Phase 3, or move S1 to Phase 4.
+- **A user's compose restart policy vs `crash`**: `restart: always` restarts the container before `restart_after`, so the fault barely happens. Claude's proposal: Kazu sets the target's restart policy to `no` for the trial and `kazu doctor` lists services that have one. Decide before Phase 4's process-faults PR.
+- **`cpu` fault: a load or a quota?** The schema has `load` today. Claude's proposal: a cgroup quota (`docker update --cpus`), as Antithesis throttles CPU time: nothing needed in the user's image, and less runner noise than a stress load. Changes the `cpu` (and possibly `memory`) fields. Decide before Phase 6's resource-faults PR.
 - **Spikes before committing** (DESIGN §8): the verdict method before Phase 5's stats work; K3s on GitHub-hosted runners before Phase 7.
 
 Resolved since the old plan: CI on stacked PRs (#18); the schema decisions (ADR-0002's 14, plus ADR-0004's relative triggers, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14).
