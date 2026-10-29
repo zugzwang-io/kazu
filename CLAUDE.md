@@ -50,7 +50,7 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - **Follow Antithesis by default.** Where they've made a design decision for the same problem, take it. Deviations are deliberate, flagged **when proposed** (not after), and recorded in DESIGN.md §6.7.
 - **YAGNI.** Don't add features, docs sections, or files nothing needs yet; a spec PR stays a spec.
 - **Fail only on facts** (product principle, DESIGN §2): a missing signal — not exercised, no data, underpowered — is never a pass, and every failure has a config switch.
-- **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus — plus `silent-failure-hunter` and `pr-test-analyzer` on nontrivial code — with its findings fixed and the verdict recorded in the PR description, before it is called ready. The reviewer's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews); the CI review (`claude-code-review.yml`) is advisory.
+- **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus — plus `silent-failure-hunter` and `pr-test-analyzer` on nontrivial code — all on Opus, with their findings fixed (or pushed back on with reasoning, never parked) and `kazu-pr-reviewer`'s verdict recorded in the PR description, before it is called ready. The reviewer's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews); the CI review (`claude-code-review.yml`) is advisory.
 - **PLAN.md tracks phases against real PR state.** After any PR is opened, updated, merged, or closed — including by you — run `/sync-plan`.
 - **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status. DESIGN.md §11 is the pre-repo decision log; don't relitigate it without new evidence.
 - **`DESIGN.md` (repo root) is the design authority for Kazu itself** — read the relevant section before config, runtime, or product decisions. SPEC.md remains the authority for the shop. Working from Claude's cloud sandbox? Read `docs/sandbox.md` first (blocked proxies, no Docker, REST-only gh).
@@ -73,17 +73,17 @@ Superpowers drives a feature from idea to PR; the rules above say what each phas
 
 | Phase (superpowers skill) | What it must meet here |
 |---|---|
-| Design (`brainstorming`) | Only for new features or design questions, not fixes, CI, or review follow-ups. DESIGN.md, SPEC.md and ADRs are the authorities; Antithesis by default, YAGNI. A written design (the architectural path) becomes a Proposed ADR or a DESIGN.md / SPEC.md edit, never `docs/superpowers/`; spike and bounded designs stay in chat. |
-| Plan (`writing-plans`) | One plan per feature, an uncommitted file outside the repo. Tasks map to PLAN.md bullets, one bullet per PR; a stack's PRs are planned together. |
-| Build (`subagent-driven-development`, `test-driven-development`) | Each PR is its own branch, stacked on the one below. Tests as in Conventions: red-first or proven by mutation both count, so never delete working code just to retype it test-first. The skills' per-task reviewers stay. |
+| Design (`brainstorming`) | Only for new features or design questions, not fixes, CI, or review follow-ups. DESIGN.md, SPEC.md and ADRs are the authorities; Antithesis by default, YAGNI. A written design (the architectural path) becomes a Proposed ADR or a DESIGN.md / SPEC.md edit, as its own PR at the bottom of the stack, never `docs/superpowers/`; spike and bounded designs stay in chat. |
+| Plan (`writing-plans`) | One plan per PR, an uncommitted file outside the repo; a stack's plans are written together, so the stack is designed as a whole. Each PR is one PLAN.md bullet, and every task belongs to exactly one PR's plan. |
+| Build (`subagent-driven-development`, `test-driven-development`) | Execute subagent-driven, one plan at a time, each on its own branch stacked on the one below. Tests as in Conventions: red-first or proven by mutation both count, so never delete working code just to retype it test-first. The skills' per-task reviewers stay. |
 | Debug (`systematic-debugging`) | As written. |
-| Finish (`finishing-a-development-branch`) | Simplification pass and coverage read, then push and open the PR (never a local merge), then `/sync-plan`. Once per PR in a stack. |
-| Final review | The pre-"ready" review in Working agreements, run once the PR exists; it is the skill's final whole-branch review. |
+| Finish (`finishing-a-development-branch`) | Skip `subagent-driven-development`'s own final review and keep its workspace. Simplification pass and coverage read, then push and open the PR (never a local merge), then `/sync-plan` marks the PR's line and the branch is pushed again. |
+| Final review (replaces `requesting-code-review` and the plan's final review) | The pre-"ready" review in Working agreements, run once the PR exists. Give the reviewers the workspace ledger's deferred and parked lines. Working agreements win over the skill's single fix wave: blocking findings are fixed or pushed back on, never parked. Record the verdict and the skill's rulings in the PR description, then delete the workspace. |
 | Review feedback (`receiving-code-review`) | Push back with reasoning when a finding is wrong; Varun decides. |
 
 Models — always name one when dispatching a subagent:
 - Code-writing subagents (implementers, fix-loop and final-review fixers): Sonnet for well-specified work, even when the plan contains the complete code; Opus for judgement (multi-file integration, debugging); never Haiku, which takes more turns and costs more. Fix rounds 4–5 escalate Sonnet → Opus; a stuck Opus implementer gets a fresh Opus with the report.
-- Design and architecture subagents: Fable.
+- Design and architecture subagents: Fable. The final review is not one of these; it runs on Opus per Working agreements.
 
 Outside the loop:
 - `/verify-foundations` and `/arch-review` run on demand, on Fable at max effort. The loop suggests them, never runs them: when a design produces an ADR, on a foundational PR (schema, protocol, the first of a stack), and when a PLAN.md phase completes.
