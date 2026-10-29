@@ -1,6 +1,6 @@
 # Kazu build plan
 
-Phased plan toward DESIGN.md's build order (§8). **The plan tracks the product**: PRs that only change the dev setup — agent instructions (`CLAUDE.md`, `.claude/`), CI plumbing, this plan's own conventions — get no line; git history is their record. **Each PR keeps its own line true**: a PR marks its own bullet `[x] #N` (adding it under the right phase if the plan has none) and edits no line carrying another open PR's number, so the plan on main is true the moment a PR merges and no PR rewrites another's status. PRs that add lines at the same spot can still collide; that's a keep-both rebase. Work in review shows in the session brief and `gh pr list`, not here. `/sync-plan` does the marking and catches drift; humans edit the phase structure. Status comes from real PR/merge state, never aspiration.
+Phased plan toward DESIGN.md's build order (§8). **The plan tracks the product**: PRs that only change the dev setup — agent instructions, repo tooling and bot workflows, this note and the legend — get no line; git history is their record. A PR an existing bullet describes is always tracked. **Each PR keeps its own line true**: a PR marks its own bullet `[x] #N` (adding it under the right phase if the plan has none) and edits no line carrying another open PR's number, so the plan on main is true the moment a PR merges and no PR rewrites another's status. PRs that add lines at the same spot can still collide; that's a keep-both rebase. Work in review shows in the session brief and `gh pr list`, not here. `/sync-plan` does the marking and catches drift; humans edit the phase structure. Status comes from real PR/merge state, never aspiration.
 
 Legend: `[x]` merged · `[ ]` not started
 
@@ -27,9 +27,9 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 
 - [x] Shop spec and ground-truth matrix (#1, #3)
 - [x] CI gate: lint and tests on every PR, stacked PRs included; all five checks required on main (#8, #10, #18, #23; rulesets 2026-10-14 and 2026-10-15)
-- [x] DESIGN.md in the repo, and this plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch (#26, #27)
+- [x] DESIGN.md in the repo, and this plan: every DESIGN §8 step refined into single-PR bullets, v1 scope, frontend sketch (#19, #26, #27)
 - [x] Config decisions: ADR-0002 and ADR-0004 accepted and folded into DESIGN.md (#31); the planner rejects config it can't run yet (ADR-0007) and traffic decides its own length, capped at 30 min (ADR-0006) (#37); scenario `duration:` removed (#38)
-- [x] Phase 3 derisked by the 2026-10-16 foundations review: S14, networking spike, slice order, ADR-0003 accepted (#32); ADR-0005 accepted with the spike's findings (#39)
+- [x] Phase 3 derisked by the 2026-10-16 foundations review: S14, networking spike, slice order, ADR-0003 accepted (#32); ADR-0005 accepted with the spike's findings, with follow-ups to ADR-0004/0006 (#39)
 - [ ] Pre-public pass: decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home); generalize "Varun" → "the maintainer" in the repo's agent instructions
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
