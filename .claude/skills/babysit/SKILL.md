@@ -15,8 +15,12 @@ Keep the open PRs healthy without the maintainer babysitting them. You may fix a
    - Make the fix, run the relevant tests and lint locally until green.
    - Commit with a message naming the CI failure it fixes, push to the PR branch.
 5. Stacked PRs whose base isn't main get no CI by design for review workflows — but lint and tests do run (pr.yml triggers on every PR). If a stacked PR shows no checks at all, run lint + `go test` locally for the touched module and report the result.
-6. Stack maintenance: if a lower PR gained commits, check whether PRs based on it now conflict (`mergeable` field); rebase upward branches bottom-up and push with `--force-with-lease` — only branches belonging to open PRs in this stack — and report exactly what was rebased.
-7. Run `/sync-plan` so PLAN.md reflects any state changes you caused.
+6. Stack maintenance: if a lower PR gained commits or merged, check whether PRs based on it now conflict (`mergeable` field), then restack bottom-up, one branch at a time, each in its own worktree (`rebase --update-refs` silently skips branches checked out in other worktrees, and every PR branch here has one). Only branches belonging to open PRs in this stack. For each branch:
+   - Fast-forward it to `origin/<branch>` first, so a cloud CI-fixer commit isn't rewritten away, and record its tip as `<pre>`.
+   - `<old base>` is the commit this branch was built on: the parent's `<pre>` if the parent was restacked in this run; `git merge-base <parent> <branch>` if the parent only gained commits; the parent's `headRefOid` (`gh pr view N --json headRefOid`) if it was squash-merged. `<new base>` is the parent's current tip, or `origin/main` if the parent merged. Check `git merge-base --is-ancestor <old base> <branch>`; if not, stop and report rather than replay someone else's commits.
+   - `git -c rerere.enabled=true rebase --onto <new base> <old base>` (rerere replays conflict resolutions already made), then confirm `git log --oneline <new base>..<branch>` shows only this PR's commits.
+   - Push with `--force-with-lease=<branch>:<pre>` and report exactly what was rebased.
+7. Run `/sync-plan` on each PR branch you touched, in its worktree, so its own PLAN.md line is right; anything else it finds is reported, not edited.
 8. Report per PR: checks state, what was fixed/pushed/rebased, and what still needs the maintainer (approvals, decisions, red checks you couldn't fix and why).
 
 If a fix would change behaviour or test intent — something a reviewer must judge rather than a mechanical repair — don't push it. Describe the options and leave the decision to the maintainer.
