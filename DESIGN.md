@@ -731,20 +731,17 @@ Deliberate deviations:
 | Deviation | Why |
 |---|---|
 | Proxies per declared edge, instead of owning the whole environment from a hypervisor | We run on customer CI runners, not our own hypervisor |
-| User-declared scenarios compared base vs head, instead of autonomous fault exploration | Kazu's question is "did this change regress?", which needs the same faults on both sides |
+| User-declared scenarios compared base vs head, instead of autonomous fault exploration (Antithesis enables all network faults by default) | Kazu's question is "did this change regress?", which needs the same faults on both sides |
 | Invariants external to the code (SDK workers, SQL, HTTP), instead of assertions inside the application | No code changes needed to start; checks run against the system from outside |
 | Assertions over proxy-measured latency and the system's own OpenTelemetry metrics | Reuses telemetry teams already emit; catches failures that leave the data correct (retry amplification, pool exhaustion, latency regressions). Widens the previous row |
-| Regression defaults (user-facing error rate, p99, recovery) compared head vs base within one run, alongside Antithesis-style defaults. Antithesis's nearest is an ephemeral branch run diffed against the last run of main, reporting properties that changed as New or Resolved findings | Pairing base and head trials on the same machine gives each run its own noise estimate (§6.3); these defaults make a minimal config give a meaningful regression verdict |
+| Regression defaults (user-facing error rate, p99, recovery) compared head vs base within one run; Antithesis diffs an ephemeral branch run against the last main run (New/Resolved findings) | Pairing base and head trials on the same machine gives each run its own noise estimate (§6.3); these defaults make a minimal config give a meaningful regression verdict |
 | Runs on the customer's CI runners (hosted lanes optional), instead of only in a vendor cloud | Free tier runs on the customer's compute |
 | A supported load tool (k6) with a template | Antithesis leaves workloads entirely to the customer; writing load is the biggest effort after packaging, so we cut it to editing a list |
 | Traffic declared in `kazu.yaml` as an image, instead of a client container inside the compose file | Keeps the system file "just the system", with no Kazu-specific content. An Antithesis client image can still be used as the traffic image |
 | A fixed lifecycle with two check timings (`after`, `eventually`), instead of the test-command layout (`first_`, `parallel_driver_`, `anytime_`, `eventually_`, ...) | Our scenarios are fixed rather than explored, so driver kinds, in-flight checks and `eventually_` (which kills running drivers) have no current use; setup lives in the system as one-shot jobs |
-| Readiness from compose healthchecks, Kubernetes readiness probes and one-shot jobs exiting 0, instead of a `setup_complete` signal sent from inside the system (SDK or JSONL); Antithesis requires the signal on compose and falls back to orchestration completion only on Kubernetes | Kazu reads what the system file already declares, so nothing inside the system knows about Kazu |
-| `crash` restarts the same container or pod in place, keeping its IP and filesystem; an Antithesis restart may change the IP and keep or lose filesystem changes, and Antithesis recommends against compose restart policies because they can pre-empt the restart | Base and head must get the same timeline; a new IP or an emptied filesystem would vary between the pair (§4.5) |
-| The exit check exempts only the kills Kazu sent itself, so OOM kills, crash loops and every other non-zero exit count; Antithesis exempts exit codes 0, 137 and 143 | Kazu records its own process faults (§6.1), so it needn't exempt by code; exempting 137 would hide out-of-memory kills |
-| Nothing is injected until the user declares scenarios or sets `auto_scenarios: true`; Antithesis runs all network faults by default | Faults go through proxies on declared edges and each must land, so there is no "all network faults" to switch on without declarations; `auto_scenarios` is that switch and stays off because it multiplies trials (§4.6) |
-
-Undecided, with an ADR in progress: what happens when two faults overlap on one target. Antithesis's rule: network faults may overlap on a link, the more aggressive one winning for the overlap and the other resuming if its window hasn't expired; only one node fault is active on a container at a time, and a later one is skipped without being logged.
+| On compose, readiness from healthchecks and one-shot jobs exiting 0, with no `setup_complete` signal from inside the system; Antithesis requires that signal there (SDK or JSONL). On Kubernetes Antithesis recommends orchestration completion with readiness probes, which is what Kazu does | Kazu reads what the system file already declares, so nothing inside the system knows about Kazu |
+| `crash` restarts the same container or pod in place, keeping its filesystem and, in practice, its IP; an Antithesis restart may change the IP and keep or lose filesystem changes | Base and head must get the same timeline; a new IP or an emptied filesystem would vary between the pair (§4.5) |
+| The exit check exempts Kazu's own kills and one-shot jobs rather than exit codes, so OOM kills (137), crash loops and every other non-zero exit count; Antithesis exempts 0, 137 and 143 | Kazu records its own process faults (§6.1), so it needn't exempt by code; exempting 137 would hide out-of-memory kills |
 
 ### 6.8 Telemetry
 
@@ -847,6 +844,7 @@ Keeping it fast and reliable:
 - Whether hosted CI runners can run K3s inside Docker (spike before step 4).
 - OTLP → Prometheus name mapping details (units, dots, delta vs cumulative counters). Deferred to step 4.
 - Generic improvements suggested by the shop's predicted misses: realistic client timeouts in the k6 template or as a default scenario (abandoned requests); memory growth relative to base as a default check, or memory limits on sealed systems; a small share of malformed requests in the template (poison messages).
+- What happens when two faults overlap on one target; §4.4's `cascading` scenario already overlaps a `latency` and a `down` on `checkout -> payments`. Antithesis's rule: network faults may overlap on a link, the more aggressive one winning for the overlap and the other resuming if its window hasn't expired; only one node fault is active on a container at a time, and a later one is skipped without being logged.
 ---
 
 ## 11. Decision log
