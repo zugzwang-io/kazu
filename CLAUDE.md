@@ -50,7 +50,7 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - **Follow Antithesis by default.** Where they've made a design decision for the same problem, take it. Deviations are deliberate, flagged **when proposed** (not after), and recorded in DESIGN.md §6.7.
 - **YAGNI.** Don't add features, docs sections, or files nothing needs yet; a spec PR stays a spec.
 - **Fail only on facts** (product principle, DESIGN §2): a missing signal — not exercised, no data, underpowered — is never a pass, and every failure has a config switch.
-- **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus, with its findings fixed, before it is called ready; the agent's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews).
+- **Independent review before "ready".** Every PR gets `kazu-pr-reviewer` dispatched on Opus — plus `silent-failure-hunter` and `pr-test-analyzer` on nontrivial code — all on Opus, with their findings fixed (or pushed back on with reasoning, never parked) and `kazu-pr-reviewer`'s verdict recorded in the PR description, before it is called ready. The reviewer's Sonnet default is for review fan-out (`/review-stack`, ad-hoc PR reviews); the CI review (`claude-code-review.yml`) is advisory.
 - **PLAN.md is true on main by construction.** Each product PR marks its own bullet `[x] #N` and edits no line another open PR owns; setup-only PRs (agent instructions, repo tooling) get no line. Run `/sync-plan` after opening or updating a PR, and after merges to catch drift.
 - **Decisions get ADRs** in `docs/adr/` (see ADR-0001). Agents draft them as Proposed; only Varun changes an ADR's status. DESIGN.md §11 is the pre-repo decision log; don't relitigate it without new evidence.
 - **`DESIGN.md` (repo root) is the design authority for Kazu itself** — read the relevant section before config, runtime, or product decisions. SPEC.md remains the authority for the shop. Working from Claude's cloud sandbox? Read `docs/sandbox.md` first (blocked proxies, no Docker, REST-only gh).
@@ -67,12 +67,26 @@ CI: `.github/workflows/pr.yml` (lint, matrix over both modules), `pr-shop.yml` (
 - Coverage is read, not targeted: before opening or pushing a PR, list the uncovered lines in the changed code (`go test -coverprofile`); each gets a test or a one-line reason it's unreachable. Untested user-facing messages and fallback branches are where bugs hide. No percentage threshold.
 - Code is not done until it is simple: before opening or pushing a PR with nontrivial code, run a simplification pass (built-in `/simplify`, or the pr-review-toolkit `code-simplifier` agent) so code lands self-documenting. Simplification findings in review are fixes to make, not points to debate.
 
-## Plugin workflow (superpowers)
+## Feature lifecycle (superpowers)
 
-Superpowers is installed per user, not in the repo, so the rules above stand on their own; these lines only adapt its skills to this repo.
+Superpowers drives a feature from idea to PR; the rules above say what each phase must meet. The plugin is installed per user, not in the repo, so those rules stand on their own when it is absent.
 
-- Brainstorm only for new features or design questions, not fixes, CI, or review follow-ups. A written design (the architectural path) becomes a Proposed ADR, a DESIGN.md edit, or a SPEC.md edit for shop behaviour — never `docs/superpowers/`. Spike and bounded designs stay in chat.
-- Implementation plans from `writing-plans` are uncommitted files outside the repo. PLAN.md stays the only committed plan.
-- `finishing-a-development-branch`: always push and open a PR; never offer a local merge.
-- Reviewers: keep the skills' own per-task reviewers. The skill's final whole-branch review comes after `finishing-a-development-branch` opens the PR: it is the pre-"ready" `kazu-pr-reviewer` pass above.
-- Subagents that write or fix code (implementers, fix-loop and final-review fixers): Sonnet for well-specified work, even when the plan contains the complete code; Opus for judgement (multi-file integration, debugging); never Haiku — it takes more turns and costs more. Fix rounds 4–5 escalate Sonnet → Opus; a stuck Opus implementer gets a fresh Opus with the report. Always name the model when dispatching.
+| Phase (superpowers skill) | What it must meet here |
+|---|---|
+| Design (`brainstorming`) | Only for new features or design questions, not fixes, CI, or review follow-ups. DESIGN.md, SPEC.md and ADRs are the authorities; Antithesis by default, YAGNI. A written design (the architectural path) becomes a Proposed ADR or a DESIGN.md / SPEC.md edit, as its own PR at the bottom of the stack, never `docs/superpowers/`; spike and bounded designs stay in chat. |
+| Plan (`writing-plans`) | One plan per PR, an uncommitted file outside the repo; a stack's plans are written together, so the stack is designed as a whole. Each product PR is one PLAN.md bullet (setup-only PRs have none), and every task belongs to exactly one PR's plan. |
+| Build (`subagent-driven-development`, `test-driven-development`) | Execute subagent-driven, one plan at a time, each on its own branch stacked on the one below. Every implementer and fixer dispatch points at this file's Conventions (subagents load this file, but the skill's prompts don't direct them to it) and, for shop tasks, copies SPEC.md's ground rules into the task context. The pre-PR steps — simplification pass, coverage read, PR description — belong to Finish, not to tasks; a test's red-first or mutation proof goes in the task report's TDD evidence. Tests as in Conventions: red-first or proven by mutation both count, so never delete working code just to retype it test-first. |
+| Per-task review (`subagent-driven-development`) | The skill's per-task reviewers stay, with their own output format. Each task review is pointed at items 1–4 of "What to check" in `.claude/agents/kazu-pr-reviewer.md` (correctness, SPEC.md conformance, lint conventions, tests), with its "blocking" read as Important or higher and "nit" as Minor; for shop tasks the relevant SPEC.md rules go into the reviewer's global constraints, so it needn't read beyond the diff. Tests a later task in the plan adds come back ⚠️, not Important. Reviewability (PR size and splits) is judged at the final review; re-reviews apply the list to the fix diff only. |
+| Debug (`systematic-debugging`) | As written. |
+| Finish (`finishing-a-development-branch`) | Skip `subagent-driven-development`'s own final review and keep its workspace (`.superpowers/sdd/<plan>/`, not the git worktree). Simplification pass and coverage read, then push and open the PR (never a local merge), then `/sync-plan` marks the PR's line, if it has one, and the branch is pushed again. |
+| Final review (replaces `requesting-code-review` and the plan's final review) | The pre-"ready" review in Working agreements, run once the PR exists. Give the reviewers the workspace ledger's deferred and parked lines. Working agreements win over the skill's single fix wave: blocking findings are fixed or pushed back on, never parked. Record the verdict and the skill's rulings in the PR description, then delete the SDD workspace; the git worktree stays for review feedback. |
+| Review feedback (`receiving-code-review`) | Push back with reasoning when a finding is wrong; Varun decides. |
+
+Models — always name one when dispatching a subagent:
+- Code-writing subagents (implementers, fix-loop and final-review fixers): Opus — at about twice Sonnet's price it costs fewer turns and fix rounds, and a missed bug here costs the maintainer's review time. Sonnet only for mechanical changes whose exact code the plan already contains (a rename, a one-line fix); never Haiku. Fix rounds 4–5 go to a fresh Opus with the report.
+- Per-task reviewers and re-reviewers: Opus; Sonnet for a mechanical task.
+- Design and architecture subagents: Fable. The final review is not one of these; it runs on Opus per Working agreements.
+
+Outside the loop:
+- `/verify-foundations` and `/arch-review` run on demand, on Fable at max effort. The loop suggests them, never runs them: when a design produces an ADR, on a foundational PR (schema, protocol, the first of a stack), and when a PLAN.md phase completes.
+- `/review-stack` and `/babysit` work the PR queue, not a single feature; `/sync-plan` runs in Finish and after merges.
