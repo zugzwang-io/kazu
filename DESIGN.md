@@ -517,7 +517,7 @@ One list holds every user check, and runs in every scenario. A scenario can add 
 
 For anything that needs code. Two decorators, both relative to traffic exiting:
 - **`@after`** runs once, right after traffic exits.
-- **`@eventually(within=...)`** is retried after traffic exits until it passes or the timeout expires. It is Antithesis's `eventually_` under the same name.
+- **`@eventually(within=...)`** is retried after traffic exits until it passes or the timeout expires. It runs where Antithesis's `finally_` does, after traffic has finished on its own, with Kazu doing the retrying.
 ```python
 from kazu_sdk import after, eventually, run
  
@@ -724,7 +724,7 @@ There is no discovery and no protocol sniffing. `kazu init` drafts edges once fr
 
 ### 6.7 Antithesis alignment
 
-We follow Antithesis's decisions by default. Same as Antithesis: the packaging contract (complete system as compose or raw manifests for single-node K3s; no internet; mocks inside the system; services by name; readiness from healthchecks or probes), a fresh, sealed environment per test, default checks for setup and correctness (no unexpected crashes or exits, opt-in language checks), and the `eventually` check timing.
+We follow Antithesis's decisions by default. Same as Antithesis: the packaging contract (complete system as compose or raw manifests for single-node K3s; no internet; mocks inside the system; services by name), a fresh, sealed environment per test, default checks for setup and correctness (no unexpected crashes or exits, opt-in language checks), and the terminal check timing: checks run once traffic has exited on its own and faults are over, which is Antithesis's `finally_`. Both `@after` and `@eventually` sit there; Kazu does the retrying that Antithesis leaves to the command.
 
 Deliberate deviations:
 
@@ -734,11 +734,17 @@ Deliberate deviations:
 | User-declared scenarios compared base vs head, instead of autonomous fault exploration | Kazu's question is "did this change regress?", which needs the same faults on both sides |
 | Invariants external to the code (SDK workers, SQL, HTTP), instead of assertions inside the application | No code changes needed to start; checks run against the system from outside |
 | Assertions over proxy-measured latency and the system's own OpenTelemetry metrics | Reuses telemetry teams already emit; catches failures that leave the data correct (retry amplification, pool exhaustion, latency regressions). Widens the previous row |
-| Regression defaults (user-facing error rate, p99, recovery, head vs base) alongside Antithesis-style defaults | Antithesis has no base vs head; these defaults make a minimal config give a meaningful regression verdict |
+| Regression defaults (user-facing error rate, p99, recovery) compared head vs base within one run, alongside Antithesis-style defaults. Antithesis's nearest is an ephemeral branch run diffed against the last run of main, reporting properties that changed as New or Resolved findings | Pairing base and head trials on the same machine gives each run its own noise estimate (§6.3); these defaults make a minimal config give a meaningful regression verdict |
 | Runs on the customer's CI runners (hosted lanes optional), instead of only in a vendor cloud | Free tier runs on the customer's compute |
 | A supported load tool (k6) with a template | Antithesis leaves workloads entirely to the customer; writing load is the biggest effort after packaging, so we cut it to editing a list |
 | Traffic declared in `kazu.yaml` as an image, instead of a client container inside the compose file | Keeps the system file "just the system", with no Kazu-specific content. An Antithesis client image can still be used as the traffic image |
-| A fixed lifecycle with two check timings (`after`, `eventually`), instead of the test-command layout (`first_`, `parallel_driver_`, `anytime_`, `finally_`, ...) | Our scenarios are fixed rather than explored, so driver kinds and in-flight checks have no current use; setup lives in the system as one-shot jobs |
+| A fixed lifecycle with two check timings (`after`, `eventually`), instead of the test-command layout (`first_`, `parallel_driver_`, `anytime_`, `eventually_`, ...) | Our scenarios are fixed rather than explored, so driver kinds, in-flight checks and `eventually_` (which kills running drivers) have no current use; setup lives in the system as one-shot jobs |
+| Readiness from compose healthchecks, Kubernetes readiness probes and one-shot jobs exiting 0, instead of a `setup_complete` signal sent from inside the system (SDK or JSONL); Antithesis requires the signal on compose and falls back to orchestration completion only on Kubernetes | Kazu reads what the system file already declares, so nothing inside the system knows about Kazu |
+| `crash` restarts the same container or pod in place, keeping its IP and filesystem; an Antithesis restart may change the IP and keep or lose filesystem changes, and Antithesis recommends against compose restart policies because they can pre-empt the restart | Base and head must get the same timeline; a new IP or an emptied filesystem would vary between the pair (§4.5) |
+| The exit check exempts only the kills Kazu sent itself, so OOM kills, crash loops and every other non-zero exit count; Antithesis exempts exit codes 0, 137 and 143 | Kazu records its own process faults (§6.1), so it needn't exempt by code; exempting 137 would hide out-of-memory kills |
+| Nothing is injected until the user declares scenarios or sets `auto_scenarios: true`; Antithesis runs all network faults by default | Faults go through proxies on declared edges and each must land, so there is no "all network faults" to switch on without declarations; `auto_scenarios` is that switch and stays off because it multiplies trials (§4.6) |
+
+Undecided, with an ADR in progress: what happens when two faults overlap on one target. Antithesis's rule: network faults may overlap on a link, the more aggressive one winning for the overlap and the other resuming if its window hasn't expired; only one node fault is active on a container at a time, and a later one is skipped without being logged.
 
 ### 6.8 Telemetry
 
