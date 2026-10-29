@@ -227,6 +227,47 @@ Private repo:
 
 Traces as evidence (same receiver, span-structure checks); org registry of standard suites; policy-as-code and waivers with expiry and audit; coverage map; hosted lanes (Firecracker spike first); SSO/SCIM, RBAC, audit export, self-hosted control plane. Refine when Phase 9 is underway.
 
+## Post-v1 backlog (faults and features from comparable tools)
+
+Ideas gathered from Toxiproxy, netem/Pumba, Envoy/Istio/gRPC fault injection, Chaos Mesh, Litmus, Gremlin, Steadybit, AWS FIS, Antithesis, Jepsen and FoundationDB (survey of 2026-10-28). Unordered within a group; nothing here is scheduled. An item moves into a phase as its own bullet when it is picked up.
+
+**Network faults (proxy)**
+- `limit_data`: cut the connection after N bytes — truncated responses accepted as complete.
+- `slicer`: split writes into small chunks — framing and partial-read bugs.
+- Heavy-tail latency distributions (normal, pareto) and correlated delay — p99 behaviour uniform jitter hides.
+- `slow_close`: delay the close after EOF.
+- Per-connection probability for `latency` and `blackhole`, seeded.
+- Connect-time faults (SYN drop, connect latency) via a DROP rule in the proxy's own network namespace — missing connect timeouts.
+- Edge connection cap: limit concurrent upstream connections — pool sizing and acquire-timeout bugs.
+
+**HTTP/gRPC faults (proxy)**
+- Request matching by path, method and header for every HTTP fault — partial outages, faults kept off health probes.
+- Per-request delay with a rate (`latency` on a sampled fraction of requests).
+- Response body and header mutation (replace, JSON patch) — parse panics, silently wrong stored values.
+- Abort extras: custom body and headers (e.g. `Retry-After`).
+- Request duplication and delayed redelivery — idempotency and dedup.
+
+**Process and resource faults**
+- Graceful stop: SIGTERM, grace period, SIGKILL, then restart — drain and shutdown bugs.
+- File-descriptor and PID limits for a window, with a leak check head vs base (FDs, threads).
+- User-defined fault: an attack and a revert command run with `docker exec` at planned times.
+- CPU throttling by cgroup quota (alongside or instead of a stress load).
+- Clock skew per container (needs a privileged helper; no arm64 support upstream today).
+
+**Checks and verdict**
+- Peak memory and log volume as default checks, head vs base.
+- "Fixed by head" and "fails on base too" lines in the verdict.
+- A fault-window timeline (error rate and latency with faults overlaid) in reports.
+- `kazu doctor` risk warnings: no healthcheck, no memory limit, `depends_on` without `service_healthy`.
+
+**Considered and rejected**
+- Packet loss, corruption, reordering, duplication at packet level: TCP hides them from a userspace proxy; chunk-dropping corrupts streams no real network would.
+- DNS faults: edges route by hosts-file alias and a sealed system has no external names; would need a Kazu DNS server.
+- Envoy `max_active_faults` and header-triggered faults: base and head could see different faults.
+- Stop/halt conditions: a sealed trial has no blast radius, and halting early biases the paired comparison.
+- Resilience scores (Litmus, Gremlin): a weighted score hides which check failed.
+- JVM/runtime-specific faults: language-specific, like in-code fault points.
+
 ---
 
 ## Frontend sketch (the design-backwards exercise)
