@@ -61,8 +61,11 @@ func BenchmarkThroughput(b *testing.B) {
 
 // BenchmarkRoundTrip sends small requests over persistent connections, one
 // in flight per connection, and reports the p50 and p99 of each round trip.
-// conns=64 shows whether the proxy holds up under concurrency, not just in
-// a single exchange.
+// conns=1 is the latency benchmark: its percentiles are the proxy's
+// per-request cost. The loop is closed, so at conns=64 each round trip mostly
+// waits behind the others (p50 ≈ conns × ns/op); there ns/op measures
+// aggregate throughput under contention and p50/p99 the spread of the tail,
+// not per-request latency.
 func BenchmarkRoundTrip(b *testing.B) {
 	for _, conns := range []int{1, 64} {
 		b.Run("conns="+strconv.Itoa(conns), func(b *testing.B) {
