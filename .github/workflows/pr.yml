@@ -41,3 +41,79 @@ jobs:
           # golangci-lint.run, which times out now and then. The linter still
           # parses the config and fails on a broken one.
           verify: false
+
+  # Advisory proxy benchmarks: base and head alternate on one runner so drift
+  # hits both alike, and benchstat goes to the job summary. Numbers never fail
+  # the PR, only a benchmark that doesn't build, run or finish does. The work
+  # is gated per job, not by a workflow-level paths filter, so the job always
+  # reports a status (skipped when the proxy and its dependencies didn't change).
+  bench-changes:
+    name: bench changes
+    runs-on: ubuntu-latest
+    outputs:
+      proxy: ${{ steps.filter.outputs.proxy }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            proxy:
+              - 'proxy/**'
+              - 'go.mod'
+              - 'go.sum'
+              - '.github/workflows/pr.yml'
+
+  bench:
+    name: bench
+    needs: bench-changes
+    if: needs.bench-changes.outputs.proxy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Without a ref this is the PR's merge commit with its base, not the
+      # branch tip: the change as it would land.
+      - uses: actions/checkout@v4
+        with:
+          path: head
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: head/go.mod
+          cache: false
+      - run: go install golang.org/x/perf/cmd/benchstat@v0.0.0-20260209182753-b57e4e371b65
+      - name: Benchmark base and head
+        # Named explicitly so bash runs with pipefail and a failing go test
+        # isn't hidden behind tee.
+        shell: bash
+        run: |
+          dirs="base head"
+          if ! grep -qs '^func Benchmark' base/proxy/*_test.go; then
+            dirs="head"
+          fi
+          for _ in 1 2 3 4 5 6; do
+            for d in $dirs; do
+              (cd "$d" && go test -run NONE -bench . -count 1 -timeout 2m ./proxy/) | tee -a "$d.txt"
+            done
+          done
+          {
+            if [ "$dirs" = head ]; then
+              echo "The base has no proxy benchmarks, so there is no base vs head comparison."
+            else
+              echo "### Base vs head"
+              echo '```'
+              benchstat base=base.txt head=head.txt
+              echo '```'
+            fi
+            echo "### Head: direct vs proxied"
+            echo '```'
+            benchstat -col /path head.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Kept so runner noise can be measured across runs before anything gates on it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: '*.txt'
+          retention-days: 90
