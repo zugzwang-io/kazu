@@ -49,6 +49,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 - [x] #39 docs: ADR-0005 accepted with the spike's findings; follow-ups for #37/#38
 - [x] #40 CLAUDE.md: tests must be shown load-bearing before they count
 - [~] #42 CLAUDE.md: superpowers plugin skills adapted to the repo workflow (doc locations, PR-only integration, kazu-pr-reviewer)
+- [x] #45 plan: each PR marks its own line (`[~]` leaves the legend), /sync-plan fixes drift only on unowned lines; /babysit restacks with `rebase --update-refs`
 - [ ] Pre-public pass: generalize "Varun" → "the maintainer" in .claude/ skills; decide DESIGN.md's public scope (§7 pricing, §9 risks, §1 other Zugzwang project names — keep public or split to a private home)
 - [ ] Before open-source launch: USPTO search for "Kazu" (classes 9 and 42); check a Zugzwang domain; publish the defensive package claims (DESIGN §1)
 
