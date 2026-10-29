@@ -23,4 +23,5 @@ Open PRs right now:
    - Blocking findings in full (file:line, concrete failure scenario); nits in one summarized list.
    - Cross-PR issues no single reviewer could see (e.g. PR 3 relies on something PR 2 must change; two PRs touching the same invariant differently).
    - Drop duplicate findings across lenses; keep the best-evidenced version.
+   - Flag any PR whose description records no pre-"ready" review verdict: it hasn't had the Opus pass, so it isn't ready whatever this review concludes.
 5. Do not post anything to GitHub unless the user explicitly asked — the report is for the maintainer first. Offer posting as a follow-up.
