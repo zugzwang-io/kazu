@@ -32,5 +32,5 @@ services:
     networks: [edge]
     extra_hosts: ["kafka-1:10.77.1.11", "kafka-2:10.77.1.12", "kafka-3:10.77.1.13"]
 networks:
-  core: { ipam: { config: [{ subnet: 10.77.0.0/24 }] } }
+  core: { ipam: { config: [{ subnet: 10.77.0.0/24, ip_range: 10.77.0.128/25 }] } }
   edge: { internal: true, ipam: { config: [{ subnet: 10.77.1.0/24 }] } }

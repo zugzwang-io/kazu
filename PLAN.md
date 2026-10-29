@@ -61,6 +61,7 @@ Order (2026-10-16 foundations review): the networking spike first, then the thin
 Networking (derisk first):
 
 - [x] spike → ADR-0005 (accepted 2026-10-16; branch `spike-network`, all checks pass on a GitHub runner and Colima): Kazu reaches the trial network through one in-network helper container (decided 2026-10-16). Prove it on a GitHub-hosted Linux runner first (CI is what matters; macOS second): the shop up with one Kazu-injected proxy and an `extra_hosts` alias on its caller, on a Kazu-allocated subnet with a static proxy IP, on a sealed (`internal`) network; the host drives the helper over one channel to read the proxy's counters and run a SQL query against `postgres`
+- [x] #56 spike: clustered servers (Kafka, Redis Cluster, MongoDB) route every connection through per-node proxies once they advertise names; multi-node Cassandra hands out peer IPs and bypasses them ([docs/spikes/advertised-addresses](docs/spikes/advertised-addresses/))
 
 Proxy (`kazu proxy`, one container per declared edge; tests run against an in-process echo server):
 

@@ -1,5 +1,5 @@
-# The client also sits on core here, so a bypass succeeds instead of failing; the client lists its own
-# connections and run.sh looks for any that reached a node's real address (10.77.0.0/24) directly.
+# The client also sits on core here, so a bypass succeeds instead of failing; the evidence is the list of
+# addresses the driver dialed. cassandra-2's real IP (10.77.0.12) can only come from system.peers.
 x-node: &node
   image: cassandra:5.0
   environment: { MAX_HEAP_SIZE: 512M, HEAP_NEWSIZE: 128M, CASSANDRA_SEEDS: cassandra-1 }
@@ -9,13 +9,13 @@ x-proxy: &proxy
   pull_policy: never
 services:
   cassandra-1: { <<: *node, networks: { core: { ipv4_address: 10.77.0.11 } } }
-  cassandra-2: { <<: *node, networks: { core: { ipv4_address: 10.77.0.12 } }, depends_on: { cassandra-1: { condition: service_healthy } } }
+  cassandra-2: { <<: *node, environment: { MAX_HEAP_SIZE: 512M, HEAP_NEWSIZE: 128M, CASSANDRA_SEEDS: cassandra-1, CASSANDRA_BROADCAST_RPC_ADDRESS: "${C2_RPC_ADDRESS:-}" }, networks: { core: { ipv4_address: 10.77.0.12 } }, depends_on: { cassandra-1: { condition: service_healthy } } }
   px-1: { <<: *proxy, command: [proxy, -listen, ":9042", -upstream, "cassandra-1:9042"], networks: { core: {}, edge: { ipv4_address: 10.77.1.11 } } }
   px-2: { <<: *proxy, command: [proxy, -listen, ":9042", -upstream, "cassandra-2:9042"], networks: { core: {}, edge: { ipv4_address: 10.77.1.12 } } }
   client:
     build: ./client
-    networks: [edge, core]
+    networks: [edge]
     extra_hosts: ["cassandra-1:10.77.1.11", "cassandra-2:10.77.1.12"]
 networks:
-  core: { ipam: { config: [{ subnet: 10.77.0.0/24 }] } }
+  core: { ipam: { config: [{ subnet: 10.77.0.0/24, ip_range: 10.77.0.128/25 }] } }
   edge: { internal: true, ipam: { config: [{ subnet: 10.77.1.0/24 }] } }
