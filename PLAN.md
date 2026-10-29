@@ -83,6 +83,7 @@ Driver (compose):
 
 Checks:
 
+- [x] #53 ADR-0009 (accepted 2026-10-29): a `sometimes` check; a check that never saw its signal is *not exercised*, never a pass
 - [ ] checks 1/4: `sql:` one-line check run by the host through `connections:` (no SDK): passes when the query returns no rows; reads only the first few rows, under a statement timeout. On the slice
 - [ ] checks 2/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
 - [ ] checks 3/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
