@@ -84,8 +84,8 @@ Driver (compose):
 
 Checks:
 
-- [x] #53 ADR-0009 (accepted 2026-10-29): a `sometimes` check; a check that never saw its signal is *not exercised*, never a pass
-- [x] #57 ADR-0011 (Proposed): every check declares `requires:` (eligibility) apart from its decision; an ineligible check is *not exercised*; supersedes ADR-0009's `sometimes`
+- [x] #53 ADR-0009 (accepted 2026-10-29; superseded by ADR-0011): a `sometimes` check; a check that never saw its signal is *not exercised*, never a pass
+- [x] #57 ADR-0011 (accepted 2026-11-10): every check declares `requires:` (eligibility) apart from its decision; an ineligible check is *not exercised*; supersedes ADR-0009's `sometimes`
 - [ ] checks 1/4: `sql:` one-line check run by the host through `connections:` (no SDK): passes when the query returns no rows; reads only the first few rows, under a statement timeout. On the slice
 - [ ] checks 2/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
 - [ ] checks 3/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
@@ -198,7 +198,7 @@ K3s moves out of DESIGN §8 step 4 so v1.0 ships compose-only ([ADR-0003](docs/a
 
 ## Phase 8 — Smart parallelism (v1.2; DESIGN §8 step 5)
 
-- [x] #54 ADR-0010 (Proposed): every scenario runs on every run; content addressing pins inputs for replay and never skips a scenario
+- [x] #54 ADR-0010 (accepted 2026-11-10): every scenario runs on every run; content addressing pins inputs for replay and never skips a scenario
 - [ ] plan: content-hashed plan (`plan_hash` per scenario); identical base/head hashes skip the scenario
 - [ ] coordinator protocol: `kazu.coord.v1` Connect — lease a trial pair, expiry, report results
 - [ ] `kazu coordinator`: self-hosted, single process, state in SQLite

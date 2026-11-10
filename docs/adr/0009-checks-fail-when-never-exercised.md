@@ -1,7 +1,7 @@
 # ADR-0009: A check that never saw what it guards is not exercised, not a pass
 
 Date: 2026-10-28
-Status: Accepted (2026-10-29)
+Status: Accepted (2026-10-29); superseded by ADR-0011 (2026-11-10)
 
 ## Context
 
