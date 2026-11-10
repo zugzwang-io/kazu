@@ -7,95 +7,117 @@ Status: Proposed
 
 ADR-0009 (accepted 2026-10-29) answered a real gap: a check can pass because nothing happened. A `sql:` check selects violations and passes on no rows, so "no order charged twice" passes when no charges were made at all. ADR-0009's answer was a separate check kind, `sometimes`, whose failure on both sides made the scenario *not exercised*.
 
-Reviewing the DESIGN fold-in (#57), the maintainer found the shape indirect: which `sometimes` vouches for which check is left for the reader to work out, and `sql` was being singled out when the question applies to every check. Every check really has two parts:
+Reviewing the DESIGN fold-in (#57), the maintainer found the shape indirect: which `sometimes` vouches for which check is left for the reader to work out. Every check really has two parts:
 
 1. **Eligibility:** did enough happen for this check's verdict to mean anything?
 2. **Decision:** given that it did, did the check pass?
 
-Kazu already answers part 1 implicitly for the checks it measures itself. A proxy-measured check over an edge with no traffic has nothing to compare, and a `metric:` check whose query returns no samples is **no data** (DESIGN §6.8). It can't answer part 1 for `sql:`, `http:` or code checks: zero rows means "nothing bad" or "nothing at all", and only the user knows which. Explicit is better than implicit, so the user says it, on the check it applies to.
+Explicit is better than implicit, so the user states eligibility on the check it applies to.
 
 ## Decision
 
-**Every check entry, top-level or in a scenario's `checks:`, may carry `requires:`, a list of conditions that all must hold for the check to be eligible. An ineligible check has no verdict: it is *not exercised*, never a pass. ADR-0009's `sometimes` kind and `@sometimes` decorator are dropped; its other decisions carry over (below).**
+**Every check entry may carry `requires:`, a list of conditions that all must hold for the check to be eligible. A check that is never eligible on either side is *not exercised*, never a pass. Without `requires:`, nothing changes. ADR-0009's `sometimes` kind and `@sometimes` decorator are dropped.**
 
-1. **`requires:` is a list; every entry must hold (AND).** Each entry is exactly one of:
-   - **`sql: { on, query }`**: holds in a trial when the query returns at least one row. `on` names a postgres connection, as for a `sql:` check. It runs when the check runs (after traffic exits), reading only the first row under the same statement timeout.
-   - **`requests: { edge | service, min }`**: holds in a trial when the proxies counted at least `min` requests between traffic start and traffic exit. `edge: a -> b` counts that one declared edge; `service: b` sums every declared inbound edge of `b`. The edges must be `http` or `grpc`, because a `tcp` proxy sees bytes, not requests; an `edge` on a `tcp` edge, or a `service` with no `http`/`grpc` inbound edge, is rejected when the config is loaded. This is the same rule as `after_requests`. `min` is an integer of at least 1.
+1. **Conditions.** `requires:` is a list, and every entry must hold (AND). Each entry is exactly one of:
+   - **`sql: { on, query }`** holds in a trial when the query returns at least one row. Kazu stops reading after the first row. `on` names a postgres connection, as for a `sql:` check.
+   - **`requests: { edge | service, min }`** holds in a trial when the proxy received at least `min` requests from callers on that trial's side between traffic start and traffic exit. It counts every request the proxy received, whatever happened to it next: forwarded, faulted or refused.
+     - `edge: a -> b` counts that one declared edge, which must be `http` or `grpc`. A `tcp` proxy sees bytes, not requests.
+     - `service: b` sums `b`'s declared `http` and `grpc` inbound edges and ignores its `tcp` ones. A service with no `http`/`grpc` inbound edge is rejected when the config is loaded, the same rule as `after_requests`.
+     - `min` is an integer of at least 1. Counts are per trial and are never summed across trials.
 
    ```yaml
-   checks:
-     - name: no_double_charge
-       sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }
-       requires:
-         - sql: { on: postgres, query: "select 1 from charges limit 1" }
-         - requests: { edge: checkout -> payments, min: 50 }
-     - name: payments_p99
-       no_regression: { service: payments, measure: p99, within: 10% }
-       requires:
-         - requests: { service: payments, min: 200 }
+   scenarios:
+     double-click:
+       env: { traffic: { DOUBLE_SUBMIT: "1" } }
+       checks:
+         - name: no_double_charge
+           sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }
+           requires:
+             - sql: { on: postgres, query: "select 1 from charges limit 1" }
+             - requests: { edge: checkout -> payments, min: 50 }
+         - name: payments_p99
+           no_regression: { service: payments, measure: p99, within: 10% }
+           requires:
+             - requests: { service: payments, min: 200 }
    ```
 
-2. **Defaults.** With no `requires:`, eligibility is what Kazu can observe on its own, stated here so an unwritten `requires:` still has one meaning:
-   - `recovers:`, `no_regression:`, `slo:` and the regression defaults: at least 1 request on each declared `http`/`grpc` edge the check reads, per trial.
-   - `metric:`: at least 1 sample from its own query, which is the existing **no data** rule.
-   - `sql:`, `http:` and `image:` checks: always eligible, so they keep today's behaviour until the user adds a condition.
+2. **When conditions are evaluated.** Once per trial, after every check in the trial has finished, including `@eventually` retries. So a `sql` condition sees the trial's final state, and a `requests` condition reads the counts snapshotted at traffic exit. On an `image:` entry, `requires:` applies to every code check in that image and is evaluated once for the entry. The check's own decision still runs in an ineligible trial and is reported for information, but it doesn't count.
 
-   A written `requires:` adds to the default; it doesn't replace it.
+3. **An error is not ineligibility.** If a condition can't be evaluated (a syntax error, a statement timeout, a refused connection), that is a check error, handled like an error in the check itself. It is never treated as "no rows". Otherwise a broken query would quietly become *not exercised*, or a pass under `warn`.
 
-3. **Eligibility is decided per trial.** A check's decision counts only in the trials where it was eligible. Per side, base or head:
-   - **Ineligible in every trial on both sides:** the check is *not exercised*, with the unmet condition named. This is a fact, not a guess.
-   - **Eligible in some base trials and in fewer head trials:** a candidate regression (head stopped doing something the check depends on). It is judged by the base-vs-head comparison on the count of eligible trials, so `flaky` and `underpowered` apply. No fixed rule decides it.
-   - **Otherwise:** the decision is compared base vs head over the eligible trials, as for any check. Too few eligible pairs to decide is **underpowered**.
-   - **Adaptive trials:** a check not yet eligible on either side leaves its scenario undecided, so pairs are added while the budget lasts; it is *not exercised* only once the budget is spent.
+4. **No defaults.** A check without `requires:` is always eligible. Every existing result keeps its own rule and its own switch: a fault that never landed, **no data** on a `metric:`, a `recovers:` window cut short by the end of traffic (ADR-0006), and **underpowered**. This ADR adds one more source of *not exercised* and changes none of these.
 
-4. **`requires:` on an `image:` entry applies to every code check in that image.** Per-function conditions inside the SDK wait until a case needs them.
+5. **Verdict.** Base and head trials are paired, as for every check.
+   - **Never eligible in any trial, on either side:** *not exercised*, naming the condition that was never met. This is decided per scenario.
+   - **Eligible in fewer head trials than base trials, including none:** a candidate regression (head stopped doing something the check depends on). It is judged by the base-vs-head comparison on the eligible-trial counts, so `flaky` and `underpowered` apply. No fixed rule decides it.
+   - **The decision** is compared over the pairs in which both sides were eligible. Too few such pairs to decide is **underpowered**.
+   - The eligibility comparison and the decision comparison are independent, and either one can regress.
+   - **Eligible on head but never on base** (head started doing it) is not a regression on eligibility. Its decision has no pairs, so it is underpowered. A head that starts doing something and gets it wrong is therefore reported as underpowered, not REGRESSED. That gap is accepted, because there is nothing on base to regress from.
+   - **Adaptive trials:** a check not yet eligible on either side leaves its scenario undecided, so pairs are added while the budget lasts. It is *not exercised* only once the budget is spent.
+   - **The landed check and eligibility are independent.** A trial whose fault didn't land still counts toward a check's eligibility. The scenario is *not exercised* for the fault either way.
 
-5. **Carried over from ADR-0009:**
-   - *Not exercised* is a check-level result that rolls up. A scenario is REGRESSED if any check regressed; otherwise not exercised if any check or fault was not exercised at `fail` severity; otherwise pass.
-   - The switch is `not_exercised: warn` at three levels, **the most specific winning**: on the check entry, then the scenario, then `gate.not_exercised`.
-   - `gate.fail_on` doesn't apply to an ineligible check, since it has no decision to fail on.
+6. **Placement.** A top-level check runs in every scenario, so a top-level check with a `requires:` that some scenario's traffic can't meet is *not exercised* there by design. Put such checks in the `checks:` of the scenarios whose traffic meets them, and at the top level only when every scenario's traffic does. Downgrading a whole scenario to `warn` instead would also downgrade its landed check.
 
-**What Antithesis does.** Its `Always` assertion fails if it is never reached, and its `Sometimes` assertion fails until it has held at least once. Both put "did this happen" inside the application, where Antithesis can see it. Kazu checks from outside, so it can't see reachability on its own. `requires:` is how the user supplies it, attached to the check it guards. This deviates from Antithesis's `Always` default, because a `sql:` or `http:` check without `requires:` stays eligible when never reached. It is recorded in DESIGN §6.7 on acceptance.
+7. **Switches.**
+   - `not_exercised: warn` exists at three levels, and the most specific wins: on the check entry (new for every check kind), then the scenario, then `gate.not_exercised`.
+   - The check-level switch covers that check's *not exercised* result. A candidate regression on eligibility counts is a regression, so `gate.fail_on` and `flaky` govern it like any other.
+   - Check results roll up to the scenario, as ADR-0009 set out: REGRESSED if any check regressed; otherwise *not exercised* if any check or fault was not exercised at `fail` severity; otherwise pass.
+
+**What Antithesis does.** Its `Always` assertion fails if it is never reached, and its `Sometimes` assertion fails until it has held at least once. Both put "did this happen" inside the application, where Antithesis can see it. Kazu checks from outside, so it can't see that on its own. This ADR deviates from Antithesis in two ways, both recorded in DESIGN §6.7 on acceptance:
+- A check without `requires:` stays eligible when never reached, unlike Antithesis's `Always`.
+- Reachability is a precondition attached to the check it guards, not a standalone `Sometimes` assertion. Antithesis has no counterpart to `requires:`.
+
+**Accepted loss.** A situation that no check depends on, such as "the reconciler re-sent at least once", can't be asserted on its own. ADR-0009's `sometimes` could do that. Here it has to hang on a check that depends on it, which also discards that check's decision in trials where the situation didn't occur. A check made only of `requires:` could restore this later if a case needs it.
 
 Considered and lost:
-- **`sometimes` as a check kind (ADR-0009).** It works, but which check it vouches for is implicit, and it only covered checks the user thought to pair it with.
-- **`sometimes: true` or `expect: rows` as a flag on `sql:`.** It's the same one-bit idea as `sometimes`. The bit sits on a separate query instead of on the check it guards, and it says nothing about request floors for proxy-measured checks.
-- **A list of ANDed decision queries per `sql:` check.** Several decision queries are better written as several checks: the AND is the same, since a scenario passes only if every check does, and each failure is reported under its own name.
-- **A bare `requests: N` taking the check's own target.** It is ambiguous for a `service:` check (is it the sum, or per edge?) and undefined for `sql:`, which has no target.
-- **A `samples:` condition for `metric:` checks.** The default (at least 1 sample, the no-data rule) covers it until a case needs a higher floor.
+- **`sometimes` as a check kind (ADR-0009):** which check it vouches for is implicit.
+- **`sometimes: true` or `expect: rows` as a flag on `sql:`:** the same one bit, on a separate query instead of on the check it guards.
+- **A list of ANDed decision queries per `sql:` check:** several checks give the same AND, and report each failure under its own name.
+- **A bare `requests: N` that takes the check's own target:** ambiguous for a `service:` check (sum or per edge?), and undefined for `sql:`.
+- **Implicit defaults (at least 1 request on each edge a proxy check reads; no data as ineligibility):** they would make existing top-level checks *not exercised* in scenarios that don't reach their service. They would also give one condition two results and two switches. Existing rules stay as they are.
+
+Superseded from ADR-0009: the `sometimes` kind, `@sometimes`, the `list` reply's kind field, and "false on base, true on head passes silently". Its counterpart here is rule 5: not a regression on eligibility, with an underpowered decision. Carried over: the roll-up, the switch precedence, adaptive trials adding pairs, and no `kazu doctor` warning for unpaired checks.
 
 ## Consequences
 
 **Schema and `Config`** (ADR-0002 shape):
-- The `check` object gains `requires`: an array of `requirement` objects, each with exactly one of `sql` (`{ on, query }`, both required, `additionalProperties: false`) or `requests` (`{ edge | service, min }`, exactly one of `edge` or `service`, `min` an integer ≥ 1).
-- `Config` gains `Requires []Requirement` on `Check`.
+- The `check` object gains:
+  - `requires`: an array of `requirement` objects. Each has exactly one of `sql` (`{ on, query }`, both required, `additionalProperties: false`) or `requests` (exactly one of `edge` or `service`, plus `min`, an integer ≥ 1).
+  - `not_exercised`: a `severity`.
+- `Config` gains `Requires []Requirement` and `NotExercised Severity` on `Check`.
 - Validation adds:
   - a postgres connection for `sql`;
   - a declared `http`/`grpc` edge for `requests.edge`;
-  - at least one such inbound edge for `requests.service`.
+  - at least one `http`/`grpc` inbound edge for `requests.service`.
+- `metric.no_data` is unchanged.
 - `Scenario.NotExercised`'s docstring widens from "a fault that never landed" to any not-exercised result in the scenario.
-- `config/testdata/reference.yaml` gains the two examples above in the same PR.
+- `config/testdata/reference.yaml` gains the example above in the same PR.
 
-**ADR-0009** becomes "Superseded by ADR-0011" when this is accepted. Its `sometimes` kind, `@sometimes` decorator and the `list` reply's kind field are never built.
+**ADR-0009** becomes "Superseded by ADR-0011" when this is accepted. Nothing of it was built.
 
-**The shop.** SPEC.md's "Every config includes a liveness check" changes with the Phase 3 shop `kazu.yaml` PR. The inverted `where not exists` query becomes a `requires:` on the checks it was meant to vouch for. The e2e asserter's nonzero-counter requirement stays.
+**The shop.** SPEC.md's "Every config includes a liveness check" changes with the Phase 3 shop `kazu.yaml` PR. The inverted `where not exists` query becomes a `requires:` on the checks it was meant to vouch for, in the scenarios whose traffic pays orders. The e2e asserter's nonzero-counter requirement stays.
 
 **PLAN bullets touched** (edited when the implementing PRs land):
 - **Phase 3:**
   - *"checks 1/4: `sql:` one-line check"*: `requires: sql` runs on the same host path.
-  - *"verdict: … a violation on both is a pass"*: eligibility per trial, *not exercised*, and the switch precedence.
+  - *"verdict: … a violation on both is a pass"*: *not exercised* from `requires:`, the per-check switch and the `--json` per-check result.
   - *"shop: step-1 `kazu.yaml` with a liveness check"*: as above.
-- **Phase 4:** *"proxy: HTTP mode — … request counter per edge"*: the counter `requires: requests` reads. Until it lands, the planner rejects `requires: requests` (ADR-0007).
+- **Phase 4:**
+  - *"proxy: HTTP mode — … request counter per edge"*: the counter that `requires: requests` reads, snapshotted at traffic start and exit. Until it lands, the planner rejects `requires: requests` (ADR-0007).
+  - *"checks: `@eventually(within=…)`"*: conditions are evaluated after the retries end.
+  - *"shop: full `kazu.yaml` and `checks/shop.py`"*: `requires:` on an `image:` entry.
 - **Phase 5:**
-  - the paired-comparison bullet and the flaky-classification bullet: comparison over eligible trials, with eligibility counts as a candidate regression;
-  - the `gate.not_exercised` bullet.
+  - *"verdict: paired comparison … underpowered"*: the eligibility comparison and the decision comparison over pairs where both sides were eligible.
+  - *"verdict: adaptive trials"*: pairs are added while a check is not yet eligible.
+  - *"verdict: flaky classification; … `gate.not_exercised` …"*: the switches.
 
 **DESIGN.md on acceptance:**
-- §4.4 reference: the examples above.
-- §4.6: a `requires:` paragraph with the defaults.
-- §4.8: a sample *not exercised* line naming the unmet condition.
-- §6.7: the deviation row.
 - §2 principle 5: an unmet `requires:` joins the list of missing signals.
+- §4.4 reference: the example above, and the `gate.not_exercised` comment widened.
+- §4.6: a `requires:` paragraph and the placement rule.
+- §4.8: a sample *not exercised* line naming the unmet condition.
+- §6.6: a pointer saying *not exercised* also comes from `requires:`.
+- §6.7: the two deviation rows.
 
 **What becomes harder:**
 - A config that wants a non-vacuous `sql:` check writes two queries where it wrote one.
