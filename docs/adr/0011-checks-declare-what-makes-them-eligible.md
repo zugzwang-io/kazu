@@ -1,7 +1,7 @@
 # ADR-0011: Every check declares what makes it eligible, apart from what makes it pass
 
 Date: 2026-11-09
-Status: Proposed
+Status: Accepted (2026-11-10)
 
 ## Context
 

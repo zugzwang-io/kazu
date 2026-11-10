@@ -1,7 +1,7 @@
 # ADR-0010: Every scenario runs on every run; Kazu never skips one as unchanged
 
 Date: 2026-10-28
-Status: Proposed
+Status: Accepted (2026-11-10)
 
 ## Context
 
