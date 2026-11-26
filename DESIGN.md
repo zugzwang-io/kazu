@@ -353,9 +353,9 @@ scenarios:
   double-click:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }   # env vars per service, passed through untouched
     checks:
-      - name: no_double_charge
+      - name: charged_once
         sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }
-        requires:                       # every condition must hold, or the check is not exercised (§4.6)
+        requires:                       # all must hold in a trial for the check to be eligible in it (§4.6)
           - sql: { on: postgres, query: "select 1 from charges limit 1" }
           - requests: { edge: checkout -> payments, min: 50 }
       - name: payments_p99
@@ -386,9 +386,7 @@ defaults:                             # not in the schema yet (joins with Phase 
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1     # code checks (§4.6); a compose-style service
     volumes: [./checks:/checks:ro]
-  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }   # passes on no rows
   - recovers: { service: payments, within: 30s }
-  - no_regression: { service: payments, measure: p99, within: 10% }
   - slo: { service: checkout, measure: error_rate, max: 1% }    # absolute; fine for rates, risky for latency
   - metric:
       query: histogram_quantile(0.99, sum by (le) (rate(db_pool_acquire_seconds_bucket[5m])))
@@ -528,14 +526,14 @@ One list holds every user check, and runs in every scenario. A scenario can add 
 - **`sql: { on, query }`** holds when the query returns at least one row. Kazu stops reading after the first row, under the same statement timeout as a `sql:` check; `on` names a postgres connection.
 - **`requests: { edge | service, min }`** holds when the proxy received at least `min` requests between traffic start and traffic exit. It reads the counter `after_requests` uses: every request the proxy received counts, forwarded or answered by a fault; a request is one HTTP request or one gRPC call (a stream counts once); a connection refused by `down` carries no request. `edge: a -> b` counts that one edge, which must be `http` or `grpc` (a `tcp` proxy sees bytes); `service: b` sums `b`'s `http`/`grpc` inbound edges, ignores its `tcp` ones, and is rejected when the config is loaded if it has none. `min` is an integer of at least 1. Counts are per trial, never summed across trials.
 
-Conditions are evaluated once per trial, after every check in the trial has finished, `@eventually` retries included. A `sql` condition therefore sees the trial's final state, which may be up to a minute after the check decided; that is intended, so write conditions about things that persist, not about a transient state such as a pending order. A `requests` condition reads the counts snapshotted at traffic exit. On an `image:` entry, `requires:` applies to every code check in the image and is evaluated once. In an ineligible trial the check's decision still runs and is reported for information, but none of that check's results from that trial count: not its decision, its no data, or its cut-short window. A condition that can't be evaluated (a syntax error, a statement timeout, a refused connection) is a check error, handled like an error in the check itself, never "no rows"; otherwise a broken query would quietly become not exercised. There are no defaults: a check without `requires:` is always eligible, and the other missing-signal results (a fault that never landed, a `recovers:` window cut short by the end of traffic, no data on a `metric:`, underpowered) keep their rules inside an eligible trial.
+Conditions are evaluated once per trial, after every check in the trial has finished, `@eventually` retries included. A `sql` condition therefore sees the trial's final state, which may be up to a minute after the check decided; that is intended, so write conditions about things that persist, not about a transient state such as a pending order. A `requests` condition reads the counts snapshotted at traffic exit. On an `image:` entry, `requires:` applies to every code check in the image and is evaluated once. In an ineligible trial the check's decision still runs and is reported for information, but none of that check's results from that trial count: not its decision, its no data, or its cut-short window. A condition that can't be evaluated (a syntax error, a statement timeout, a refused connection) is a check error, handled like an error in the check itself, never "no rows"; otherwise a broken query would quietly become not exercised, or a pass under `warn`. There are no defaults: a check without `requires:` is always eligible, and the other missing-signal results (a fault that never landed, a `recovers:` window cut short by the end of traffic, no data on a `metric:`, underpowered) keep their rules inside an eligible trial.
 
 **Verdict.** Base and head trials are paired, as for every check. The eligibility comparison and the decision comparison are independent, and either can regress:
 - never eligible in any trial, on either side: **not exercised**, naming the condition that was never met, decided per scenario;
 - eligible in fewer head trials than base trials, including none: a candidate regression (head stopped doing something the check depends on), judged by the base-vs-head comparison on the eligible-trial counts, so `flaky` and `underpowered` apply; no fixed rule decides it;
 - the decision is compared over the pairs in which both sides were eligible; too few such pairs to decide is **underpowered**;
 - eligible on head but never on base (head started doing it) is not a regression on eligibility, and its decision has no pairs, so it is underpowered. A head that starts doing something and gets it wrong is reported as underpowered, not REGRESSED; an accepted gap, since there is nothing on base to regress from;
-- with one base and one head trial per scenario (Phase 3, before the statistical verdict): eligible on base but not on head is REGRESSED; eligible on head but not on base passes; eligible on neither is not exercised; eligible on both compares the decision as for any check;
+- with one base and one head trial per scenario (Phase 3, before the statistical verdict): eligible on base but not on head is REGRESSED; eligible on head but not on base passes; eligible on neither is not exercised; eligible on both compares the decision as for any check. The statistical rules above replace this once the paired comparison lands;
 - under `gate.fail_on: violation` the decision is judged in every head trial where the check is eligible, whatever base did. Eligibility is still compared as above: losing it is a regression, not a violation, and never having it is still not exercised;
 - under adaptive trials, a check not yet eligible on either side leaves its scenario undecided, so pairs are added while the budget lasts; it is not exercised only once the budget is spent;
 - the landed check (§6.6) and eligibility are independent: a trial whose fault didn't land still counts toward a check's eligibility, and the scenario is not exercised for the fault either way.
@@ -613,8 +611,8 @@ A fault that never landed, a check whose `requires:` was never met, a metric wit
 ```
   ✗ slow-payments: fault on checkout -> payments was not exercised
     no traffic reached the proxy; checkout may use an IP address or bypass the system resolver
-  ✗ double-click: check "no_double_charge" was not exercised
-    requires: sql on postgres returned no rows on base or head in 5/5 trials; check that traffic creates charges
+  ✗ double-click: check "charged_once" was not exercised
+    requires: "select 1 from charges limit 1" on postgres returned no rows in any of 5 base and 5 head trials; check that traffic creates charges
   ✗ db-blip: metric "payment attempts per order" has no data
     no samples for payment_attempts_total; check the service's OTLP exporter (kazu doctor)
   ⚠ db-blip: latency within 1% is underpowered
@@ -754,7 +752,7 @@ Servers that hand out their own addresses after the first connection (Kafka brok
 - a request-level fault on traffic the proxy can't parse as HTTP/gRPC.
   By default, not exercised fails the scenario, because passing would be a lie. It is a fact, not a heuristic, and it can be downgraded to a warning globally (`gate.not_exercised: warn`) or per scenario, for cases like a 1% fault on light traffic.
 
-*Not exercised* also comes from a check whose `requires:` was never met (§4.6). The two are independent: a trial whose fault didn't land still counts toward a check's eligibility, and the scenario is not exercised for the fault either way.
+*Not exercised* also comes from a check whose `requires:` was never met (§4.6).
 
 There is no discovery and no protocol sniffing. `kazu init` drafts edges once from service names it finds in env values, as a convenience a human reviews; nothing infers anything during a run.
 
@@ -778,7 +776,7 @@ Deliberate deviations:
 | On compose, readiness from healthchecks and one-shot jobs exiting 0, with no `setup_complete` signal from inside the system; Antithesis requires that signal there (SDK or JSONL). On Kubernetes Antithesis recommends orchestration completion with readiness probes, which is what Kazu does | Kazu reads what the system file already declares, so nothing inside the system knows about Kazu |
 | `crash` restarts the same container or pod in place, keeping its filesystem and, in practice, its IP; an Antithesis restart may change the IP and keep or lose filesystem changes | Base and head must get the same timeline; a new IP or an emptied filesystem would vary between the pair (§4.5) |
 | The exit check exempts Kazu's own kills and one-shot jobs rather than exit codes, so OOM kills (137), crash loops and every other non-zero exit count; Antithesis exempts 0, 137 and 143 | Kazu records its own process faults (§6.1), so it needn't exempt by code; exempting 137 would hide out-of-memory kills |
-| A check without `requires:` stays eligible when never reached (`sql:` and `http:` pass on nothing); Antithesis's `Always` fails if it is never reached | Kazu checks from outside, so it can't see that a check was reached: a violation-selecting query returns no rows both for "no violations" and for "nothing happened". Only the user knows what reached-ness is, and states it with `requires:` (§4.6) |
+| A check without `requires:` stays eligible when never reached (a `sql:` check passes on no rows); Antithesis's `Always` fails if it is never reached | Kazu checks from outside, so it can't see that a check was reached: a violation-selecting query returns no rows both for "no violations" and for "nothing happened". Only the user knows what has to happen first, and states it with `requires:` (§4.6) |
 | Reachability is a precondition attached to the check it guards (`requires:`), not a standalone `Sometimes` assertion; Antithesis has no counterpart to `requires:` | Which assertion a `Sometimes` vouches for is implicit, left for the reader to work out; the condition on the check it applies to makes it explicit |
 
 ### 6.8 Telemetry
