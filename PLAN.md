@@ -18,7 +18,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 | Checks: Python, TypeScript and Go SDK images with `@after`/`@eventually`; one-line `sql`, `http`, `recovers`, `no_regression`, `slo`, `metric` | Java/Kotlin, Ruby SDKs → community, after v1 |
 | OTLP receiver, per-trial metric store, PromQL | — |
 | Verdict: trial pairs, per-run noise, adaptive trials, underpowered, flaky, false-discovery control | History-informed starting trial count → Phase 8 |
-| Static shards + `merge`; GitHub Action; PR comment; JUnit/Markdown/JSON; OTLP/S3/webhook sinks | Coordinator, dynamic workers, skip-unchanged, Kubernetes runner → Phase 8 (v1.2) |
+| Static shards + `merge`; GitHub Action; PR comment; JUnit/Markdown/JSON; OTLP/S3/webhook sinks | Coordinator, dynamic workers, Kubernetes runner → Phase 8 (v1.2) |
 | Run records, `replay`, `explain`, `diff`; `init` (+ CI templates for five CIs), `doctor`, `auto_scenarios` | — |
 | GoReleaser: binaries, brew, Docker image, installer; npm + PyPI `kazu-cli`; SDK images on GHCR | Hosted lanes → Phase 10 |
 | Terminal, PR comment and Markdown summary as the only UIs | Web UI, control plane, consumer contracts, AI → Phase 9 (paid v1) |
@@ -125,7 +125,7 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 - [ ] plan: resolve fault anchors (`from`, joins) into times (ADR-0004)
 - [ ] faults on a service: network faults on every declared inbound edge of the service
 - [ ] scenarios: a scenario's `traffic:` override, merged over the default traffic
-- [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan + per-trial results + proxy counters + where each trial's Kazu container logs are; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
+- [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan with every image pinned by digest (traffic, checks, each system service on base and head) and the resolved base and head variables + per-trial results + proxy counters + where each trial's Kazu container logs are; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
 - [ ] `kazu replay <run-id> [--trial N]`
 - [ ] shop: `fraud` gRPC service, payments calls it for orders ≥ 1,000 cents (business rule 6), integration tests
 - [ ] shop: full `kazu.yaml` and `checks/shop.py`; scenarios Kazu can't run yet marked skipped in `expectations.yaml`
@@ -200,7 +200,7 @@ K3s moves out of DESIGN §8 step 4 so v1.0 ships compose-only ([ADR-0003](docs/a
 ## Phase 8 — Smart parallelism (v1.2; DESIGN §8 step 5)
 
 - [x] #54 ADR-0010 (accepted 2026-11-10): every scenario runs on every run; content addressing pins inputs for replay and never skips a scenario
-- [ ] plan: content-hashed plan (`plan_hash` per scenario); identical base/head hashes skip the scenario
+- [x] #PRNUM design: ADR-0010 folded into DESIGN.md and PLAN.md
 - [ ] coordinator protocol: `kazu.coord.v1` Connect — lease a trial pair, expiry, report results
 - [ ] `kazu coordinator`: self-hosted, single process, state in SQLite
 - [ ] `kazu worker --coordinator <addr>`
@@ -214,7 +214,7 @@ The control plane lives in a private repo (`zugzwang-io/kazu-cloud`, DESIGN §11
 
 Public repo:
 
-- [ ] ADR + PR: shared packages (plan hash, run record, leasing) move from `internal/` to importable paths
+- [ ] ADR + PR: shared packages (run record, leasing) move from `internal/` to importable paths
 - [ ] `kazu.cloud.v1` Connect API schema: policies and contracts before a run, records after
 - [ ] `kazu run --cloud`: token auth, record upload, policy fetch; falls back to local gating when the control plane is unreachable
 
@@ -295,7 +295,7 @@ What working backwards from the screens changed or confirmed:
 - **The run record is the contract every surface renders.** Terminal, Markdown, PR comment, `explain` and the web UI are projections of one JSON record, so the record (Phase 4) is designed first and the renderers are thin. Nothing a screen shows is computed outside the record.
 - **`kazu.yaml` needs nothing new.** Every screen's fields come from the config as ADR-0002 shapes it plus run-time facts (image digests, counters, trial results). The config stack can be reviewed as is.
 - **One-line checks need stable identities.** History and contract views key on `(scenario, check)` across commits; naming an unnamed check by its position breaks when the list is reordered. Decide in the run-record PR: a content-derived id, with `name:` recommended in the templates.
-- **"Changed since base" is derivable.** The PR comment names the services whose images differ between base and head; the plan already resolves both to digests, so no extra config.
+- **"Changed since base" is derivable.** The PR comment names the services whose images differ between base and head; the run record pins every service's image on base and head by digest, so no extra config.
 - **No free web UI in v1.** The screens confirm the terminal plus PR comment carry everything a developer needs; an HTML report is not added (YAGNI, DESIGN §11).
 
 ---
