@@ -1,103 +1,175 @@
-# ADR-0008: Network faults have a direction; `timeout` forwards the request before withholding the response
+# ADR-0008: Network faults have a direction; `timeout` forwards the request before dropping the response
 
 Date: 2026-10-28
 Status: Proposed
 
 ## Context
 
-Kazu's faults cannot yet lose a response. Every planned network fault acts on both directions of an edge, or on the connection as a whole: `latency` delays both streams, `blackhole` swallows everything, `reset` cuts the connection, `down` refuses it. The HTTP `timeout` fault's definition in DESIGN.md §4.5 doesn't say whether the request reaches the callee before the caller is left hanging. None of them can produce the case where **the callee receives and processes the request and the caller never gets the answer**.
+None of Kazu's planned faults can produce the case where **the callee receives and processes the request and the caller never gets the answer**. Every network fault acts on both directions of an edge, or on the connection as a whole. DESIGN.md §4.5 doesn't say whether the HTTP `timeout` fault lets the request reach the callee.
 
-That case is the unknown-outcome bug class: a payment that happened but the caller can't tell, so it retries with a fresh key (double charge) or marks the order `failed` (a charge on a failed order). The shop's core invariant is built around it: 2xx → `paid`; 4xx, or refused or 503-shed on every attempt → `failed`; a timeout, reset or other 5xx → stays `pending` for the reconciler, which re-sends under the same idempotency key, and payments dedups under an advisory lock on that key. Kazu's test oracle expects Kazu to catch `TIMEOUT_AS_FAILURE` and `RETRY_NEW_KEY`, and today the only fault that produces an unknown outcome is a `down` that happens to reset a connection mid-request, by luck of timing.
+That case is the unknown-outcome bug class: a payment that happened, but the caller can't tell. So it retries with a fresh key (a double charge) or marks the order `failed` (a charge on a failed order). The shop's core invariant is built around it:
+- 2xx means `paid`.
+- A 4xx, or refused or 503-shed on every attempt, means `failed`.
+- A timeout, reset or other 5xx leaves the order `pending`. The reconciler then re-sends it under the same idempotency key, and payments deduplicates under an advisory lock on that key.
 
-Three independent research passes on 2026-10-28 (network tools: Toxiproxy, netem, Pumba; HTTP proxies: Envoy, Istio, Chaos Mesh; Antithesis, Jepsen, FoundationDB) each ranked this the most valuable missing fault. Toxiproxy gives every toxic a `stream` (`upstream` = client to server, `downstream` = server to client, the default). Antithesis treats incoming and outgoing packets independently, so "all network faults may be asymmetric", and a clog targets "inbound packets, outbound packets, or both". Chaos Mesh's HTTPChaos has `target: Request | Response`. PLAN.md carries an open decision for one corner of this, "latency: delay request, response, or both?", slated for proxy 2/5. The maintainer approved the mechanism in principle on 2026-10-28; this ADR pins it down.
+Today the only way to produce an unknown outcome is a `down` that happens to reset a connection mid-request.
+
+Three research passes on 2026-10-28 each ranked this the most valuable missing fault:
+- **Toxiproxy** gives every fault a `stream`.
+- **Antithesis** treats inbound and outbound packets independently ("all network faults may be asymmetric").
+- **Chaos Mesh's** HTTPChaos has `target: Request | Response`.
+
+PLAN.md carries the open decision "latency: delay request, response, or both?". The maintainer approved the mechanism on 2026-10-28 and settled the details below on 2026-11-26.
 
 ## Decision
 
+### One natural way per fault
+
+Each caller-and-callee outcome has exactly one fault that produces it, at each granularity. A fault that could be written two ways makes configs harder to read and review. This table is the test for any fault added later:
+
+| Fault | What the callee does | What the caller sees |
+|---|---|---|
+| `latency`, `direction: response` (default) | processes the request on time | the answer arrives `delay` late |
+| `latency`, `direction: request` | gets the request `delay` late, then processes it | the answer arrives `delay` late. A caller that times out and retries can race the original at the callee |
+| `bandwidth` | as usual, at a throttled rate | slow transfers |
+| `blackhole`, `direction: request` | sees nothing until the window ends, then gets the held bytes late | silence for the window |
+| `blackhole`, `direction: response` | processes the request; its answer is held until the window ends | silence for the window, then the answer late, usually after it has given up |
+| `blackhole`, `direction: both` | sees nothing until the window ends | silence, both ways, until the window ends |
+| `reset`, `direction: request` | never sees the request | `ECONNRESET` straight away |
+| `reset`, `direction: response` | processes the request | `ECONNRESET` when the answer starts |
+| `down` | never sees the request | `ECONNREFUSED` on new connections; live ones are reset |
+| `errors` (HTTP/gRPC) | never sees the request | an error status from the proxy |
+| `timeout` (HTTP/gRPC) | processes the request | silence; the answer is dropped and never delivered |
+
+`timeout` and `blackhole, direction: response` aren't duplicates. `timeout` drops one sampled request's answer for good. `blackhole` pauses the whole connection and delivers what it held once the window ends. `reset, direction: response` is response loss with an immediate error, and `timeout` is response loss with silence.
+
 ### A `direction` field on network faults
 
-`latency`, `blackhole`, `reset` and `bandwidth` take an optional `direction`:
+- **`request`** means the bytes the caller sends toward the callee, following the edge's `a -> b` arrow.
+- **`response`** means the bytes the callee sends back.
+- The names are relative to the edge, so they mean the same on a `tcp` edge, where the proxy sees only bytes.
+- On a `service: b` target, the field applies the same way to every declared inbound edge of `b`.
 
 ```yaml
+- { edge: checkout -> payments, fault: latency, delay: 300ms }                       # answers late
+- { edge: checkout -> payments, fault: latency, delay: 300ms, direction: request }   # requests arrive late
 - { edge: checkout -> payments, fault: blackhole, direction: response, after: 20s, for: 10s }
-- { edge: checkout -> payments, fault: latency, delay: 300ms, direction: request }
 ```
 
-- `request`: bytes the caller sends toward the callee (the edge's `a -> b` arrow).
-- `response`: bytes the callee sends back to the caller.
-- `both` (default): each stream independently, as a real link does.
+- **`latency`** takes `request` or `response`, and defaults to `response`. `delay` is always the time added to a call, applied once, in the one direction chosen. There is no `both`: splitting a delay across the two directions has no use, and slowing streams in both directions is what `bandwidth` does. Under `response` the callee acts on time and its answer is late, which is what "payments is slow" usually means. `request` exists for the case where the callee acts late, so that a caller's retry can race the original.
+- **`blackhole`, `reset` and `bandwidth`** take `request`, `response` or `both`, and default to `both`. For these faults, `both` is the link failing, which is the natural case.
+- **`down`, `errors`, `timeout`** and the process and resource faults take no `direction`, and the schema rejects it on them:
+  - `down` is a state of the connection, and refused has to keep meaning "definitely not processed".
+  - `errors` never forwards, so there is no stream to choose.
+  - `timeout` acts on the response by definition.
+  - The process and resource faults have no stream.
 
-The names are edge-relative and mean the same thing on a `tcp` edge, where the proxy sees only bytes: `request` is the caller's stream, `response` the callee's. On a `service: b` target the field applies to every declared inbound edge of `b` the same way.
+### What each fault does to live connections
 
-What each fault does per direction:
+**A network fault applies to live connections from the moment it starts.** Otherwise a pooled keep-alive connection would ride through it untouched.
 
-| `fault` | `request` | `response` | `both` |
-|---|---|---|---|
-| `latency` | the caller's chunks are delayed; the callee's pass | the callee's chunks are delayed; the caller's pass | each stream is delayed. `delay` is one-way, so a call pays it twice: `delay: 300ms` turns a 10 ms call into roughly 610 ms, as a 300 ms link would |
-| `blackhole` | the caller's bytes are read and discarded; nothing reaches the callee | the caller's bytes are forwarded and the callee processes them; its answer is read and discarded, and the caller's connection stays open with no bytes on it | everything is discarded, both ways |
-| `reset` | a connection drawn for reset is cut on the caller's next chunk, before it is forwarded: the callee never saw it | a drawn connection is forwarded and cut on the callee's first answering chunk, before it is relayed: the callee did the work, the caller sees `ECONNRESET` | cut on the next chunk from either side; on request/response protocols this is nearly always the request |
-| `bandwidth` | the caller's stream is throttled to `limit` | the callee's stream is throttled | each stream is throttled to `limit` independently, like a full-duplex link of that speed |
+**`blackhole` pauses; it never discards.** In the selected direction, the proxy stops reading. TCP then holds the bytes back: the sender's writes fill the socket buffers and then block, the way a real partition behaves. When the window ends, the proxy reads again and the held bytes are delivered late, as TCP's retransmits do across a partition that heals. Nothing is lost, so the stream is never corrupted.
 
-Two rules make a one-directional fault honest on a byte stream:
-
-- **A fault applies to live connections from the moment it starts**, including `blackhole`. A fault that only touched new connections would let a pooled keep-alive connection ride through it, the way `down` must cut live connections for the same reason; and a `direction: response` blackhole that spared connections opened before it started would miss every pooled caller.
-- **A connection that lost bytes to a `blackhole` is reset when the blackhole ends.** Resuming the stream would hand both sides a byte stream with a hole in it, which no network delivers (TCP retransmits across a healed partition; it never splices). Resetting is the honest analogue, and it makes `for` mean what it says: on every connection, the fault is over when its window ends, and a caller with no timeout of its own gets a definite `ECONNRESET` at the latest then.
-
-Faults that do not take `direction`, and why:
-
-- **`down`**: it is a connection-level state (refuse new connections with `ECONNREFUSED`, reset live ones), not a stream filter. A refused connection has no direction, and a link that passes packets one way only is `blackhole` with a direction, which the field already expresses. Giving `down` a direction would also blur the one outcome the shop depends on it for: refused means definitely not processed. The schema rejects `direction` on it.
-- **`errors`**: the proxy answers the caller itself and never forwards, so there is no stream to pick. Rewriting a status the callee actually returned is a different fault (response rewrite), not decided here.
-- **`timeout`**: it is a response-direction fault by definition, below.
-- Process and resource faults (`crash`, `pause`, `cpu`, `memory`, `disk_full`): no stream.
+This is why `blackhole` is the fault that tests a stale request arriving after the caller gave up and retried. A caller with no client timeout of its own hangs until the window ends.
 
 ### HTTP `timeout` forwards first
 
-On a request drawn for `timeout` (by `rate`, from the seeded per-request PRNG), the proxy **forwards the request to the callee in full**, then **reads the callee's response and discards it as it arrives**, and sends the caller nothing. So the callee processes the request and the caller is left with an unanswered request: response loss at the HTTP layer.
+On a request drawn for `timeout` (by `rate`, from the seeded per-request PRNG), the proxy:
+1. forwards the request to the callee in full;
+2. reads the callee's answer as it arrives and drops it, so the callee isn't held up and its handler completes normally;
+3. sends the caller nothing.
 
-What the caller sees: no bytes on the connection for that request. A caller with a client timeout gives up when it fires (the shop: 1 s per payments attempt, then a retry with the same key) and closes the connection; the proxy then closes the upstream side. A caller with no timeout hangs until the fault's `for` window ends, when the proxy resets every connection still holding a withheld response (the same rule as `blackhole`), so a hung request turns into `ECONNRESET` at the latest at the end of the fault. Either way the caller cannot tell whether the callee did the work, which is the point. The withheld response is never delivered: the proxy reads and drops it as it arrives, so the callee is not back-pressured and its handler completes normally.
+A caller with a client timeout gives up and closes, and the proxy then closes the upstream side. **When the fault's window ends, the proxy resets every connection still waiting for a dropped answer.** A caller with no timeout therefore gets `ECONNRESET` at the end of the window. It doesn't hang until Kazu's 30-minute trial cap, so the missing timeout shows up as errors inside the trial, which the error-rate checks see, rather than as *not exercised*.
 
-`timeout` takes no `direction`. A per-request hang where the request is *not* forwarded is a different fault (the callee never saw it, so the honest caller outcome is "not processed", which `blackhole: { direction: request }` already produces per connection); nothing needs it per request today.
+A request that is never delivered at all has one natural form: `blackhole, direction: request`, which works per connection. A version for a sampled share of requests is in the post-v1 backlog.
 
-### The landed check counts a direction only when it changed what a side saw
+### Overlapping faults on one edge
 
-Each proxy keeps applied-fault counters per fault and per direction (proxy 4/5, read through the control service in 5/5, written to the run record). A fault counts as **applied** only on an observable effect in a direction it selects. Forwarding the request, or accepting the connection, is never an application of a response-direction fault:
+Faults whose windows overlap on the same edge apply to each request in a fixed order:
 
-| `fault` | applied when |
+**`latency` → `bandwidth` → `errors` / `timeout` / `reset` → `blackhole` → `down`**
+
+A fault that ends the request stops the chain, so `down` always wins. Latency plus errors gives a **slow error**: the request waits out its delay, then gets the error. That's how a struggling dependency usually fails; a fast error is what a service does itself when it sheds load.
+
+**Two faults of the same kind overlapping on one edge are rejected when the config loads**, with an error naming both. Two latencies, or two error rates, have no single obvious meaning, so the user picks one or sequences them with `from:`.
+
+A per-scenario order override is in the post-v1 backlog.
+
+### The landed check counts an effect, not an attempt
+
+Each proxy keeps applied-fault counters per fault and per direction. They are added in proxy 4/5, read through the control service in proxy 5/5, and written to the run record. A fault counts as **applied** only when it changed what a side saw:
+
+| Fault | Applied when |
 |---|---|
-| `latency` | a chunk in a selected direction was held for the delay |
-| `blackhole` | a byte in a selected direction was read and withheld. For `response`, that means the callee actually answered and the answer was dropped; a callee that never answers gives zero and the scenario is *not exercised* |
+| `latency` | a chunk in its direction was held for the delay |
+| `blackhole` | the proxy left readable bytes unread in a selected direction. For `response`, the callee answered during the window |
 | `reset` | a drawn connection was cut on a chunk in the selected direction. For `response`, the callee had started answering |
-| `bandwidth` | the limiter made at least one write in a selected direction wait; a cap traffic never reaches has changed nothing |
-| `timeout` | a drawn request's response arrived from the callee and was discarded. A drawn request whose callee never answered (the caller hung up first, or the callee is down) does not count: the proxy withheld nothing |
+| `bandwidth` | the limiter made at least one write in a selected direction wait |
+| `timeout` | a drawn request's answer arrived from the callee and was dropped |
 
-This is the product principle applied to direction: a missing signal is never a pass. A 5 % `timeout` on light traffic that drew no request, or a `response` blackhole against a callee that was itself down, reports *not exercised*, and `not_exercised: warn` exists for scenarios where that is expected.
+A `response` blackhole against a callee that never answers, or a 5% `timeout` that drew no request, therefore reports *not exercised*. Forwarding a request or accepting a connection never counts.
 
 ### Alternatives considered
 
-- **A separate `response_loss` fault kind.** One kind for one composition. Each of `blackhole`, `reset` and `latency` has a useful response-only form (lost answer, answer cut mid-stream, slow answers with fast requests), and `latency` has a useful request-only form (slow uploads); a new kind per combination would multiply the table, while one field on the existing kinds covers them all and resolves PLAN.md's latency question in passing. Lost.
-- **Toxiproxy's per-toxic `stream: upstream | downstream`.** Semantically the same field; this decision adopts it and changes two things. The names: `upstream` means the client-to-server stream in Toxiproxy but *the server* in nginx, Envoy and most proxy vocabulary, so the same word reads opposite ways; `request`/`response` are unambiguous on an edge written `a -> b`. The default: Toxiproxy defaults to `downstream`; Kazu defaults to `both`, so a fault with no direction is the link failing, which matches Antithesis's symmetric default and the existing fault definitions. Antithesis's `inbound`/`outbound` were considered for the names too, and lost for being node-relative (inbound to whom?) on a field that lives on an edge.
-- **Do nothing: faults always act on both streams.** The unknown-outcome class stays unreachable except by a lucky mid-request reset, so the shop's reconciler, the idempotency-key reuse and the advisory-lock dedup are never exercised by a scheduled fault, and `TIMEOUT_AS_FAILURE` and `RETRY_NEW_KEY` are caught only by accident. Lost.
+- **A separate `response_loss` fault kind.** It would need one kind per combination of fault and direction; one field covers them all. Lost.
+- **Toxiproxy's `stream: upstream | downstream`, defaulting to `downstream`.** It's the same field, but `upstream` means opposite things in Toxiproxy and in nginx or Envoy, while `request`/`response` are unambiguous on an `a -> b` edge. Antithesis's `inbound`/`outbound` lost because they are relative to a node, not an edge.
+- **`blackhole` discarding bytes and resetting the connection at the end.** It never delivers late, so it can't find the stale-request bug. Resuming after a discard would corrupt the stream. Lost to pausing.
+- **`delay` applied in each direction under `both`.** A call would pay `delay` twice, which surprises anyone reading p99 numbers. Lost to "delay is the time added to the call".
+- **"Most aggressive fault wins" on overlap (Antithesis's rule).** It gives fast errors under latency. Lost to the fixed order, as a recorded deviation.
+- **Do nothing.** The unknown-outcome class stays unreachable except by luck. Lost.
 
 ### Antithesis alignment
 
-Following Antithesis: its network faults are asymmetric by construction ("incoming and outgoing packets are treated independently, so all network faults may be asymmetric"; a clog is "inbound, outbound, or both"), and a fault with no direction given is symmetric. Kazu's field is the same capability on a per-edge proxy, named edge-relative rather than node-relative because Kazu targets edges. Not a deviation; no §6.7 row. `down` taking no direction isn't one either: Antithesis has no refused-connection fault (its "stopped" partition drops packets, which is Kazu's `blackhole`). `timeout` has no Antithesis counterpart to align with, since Antithesis injects no HTTP-layer faults.
+Antithesis's network faults can act in one direction ("inbound, outbound, or both"), its partitions hold traffic rather than corrupt it, and TCP delivers what was held once a partition heals. Kazu's `direction` and its pausing `blackhole` follow that.
+
+Deviations, recorded in DESIGN §6.7 on acceptance:
+- **Latency defaults to `response`,** where Antithesis's network faults are symmetric by default. `delay` then means the time added to a call, which is what users mean by "payments is slow".
+- **Overlapping faults apply in a fixed order,** where Antithesis lets the more aggressive one win. The only case where the two give different results is latency combined with errors, timeout or reset, which gives a slow error under Kazu's order.
+
+`down` has no Antithesis counterpart: Antithesis's partitions drop packets rather than refuse connections. Neither does `timeout`: Antithesis injects no faults at the HTTP layer.
+
+### Settled 2026-11-26
+
+1. When a `blackhole` ends, connections resume and the held bytes are delivered late (pause, not discard).
+2. Overlapping faults: the fixed order above; two faults of the same kind on one edge are rejected; a per-scenario order override goes in the backlog.
+3. Latency takes `request | response`, defaulting to `response`; `delay` is the time added to a call; there is no `both`.
+4. `timeout` takes no `direction`. A request never delivered is `blackhole, direction: request`; a sampled per-request version goes in the backlog.
+5. When a `timeout` window ends, connections still waiting for a dropped answer are reset.
 
 ## Consequences
 
-**Schema** (ADR-0002, decisions 10 and 12): the fault object gains `direction`, enum `request | response | both`, default `both`; the per-kind branches allow it on `latency`, `blackhole`, `reset` and `bandwidth` and reject it everywhere else, since that is decidable inside one object. Kazu's decoder fills in the default. Until a kind's PR implements it, the planner rejects `direction` on that kind (ADR-0007).
+**Schema and validation** (ADR-0002, decisions 10 and 12):
+- The fault object gains `direction`.
+  - On `latency`, its values are `request | response`, default `response`.
+  - On `blackhole`, `reset` and `bandwidth`, its values are `request | response | both`, default `both`.
+  - It is rejected on every other kind.
+- The defaults are filled in by Kazu's decoder.
+- Validation rejects two faults of the same kind on one edge (counting `service:` targets as their inbound edges) unless they can't overlap. They can't overlap only if both windows are planned wall-clock times that don't intersect (ADR-0004), or if one is sequenced after the other's end with `from:`. A window that depends on a request-count trigger isn't known until run time, so it is treated as able to overlap.
+- Until a kind's PR implements `direction`, the planner rejects it on that kind (ADR-0007).
 
 **PRs that change:**
+- **A small config PR** ahead of proxy 2/5: the schema, the `Fault` field, the defaults, the same-kind overlap check, and table tests.
+- **Proxy 2/5 (`latency`):** its PLAN bullet becomes "delay plus jitter per chunk in the fault's `direction` (default `response`), seeded". The echo-server tests cover both directions. This closes PLAN.md's open latency decision.
+- **Proxy 3/5 (`down`):** asserts that `direction` is rejected, and that `down` wins over every other fault while it overlaps them.
+- **Proxy 4/5 (fault program, applied counters):** the counters carry a direction, and overlapping faults apply in the fixed order.
+- **The `blackhole`, `reset` and `bandwidth` PR(s):** each implements its rows of the direction table, the live-connection rule, and `blackhole`'s pause and resume.
+- **The HTTP `timeout` PR:** forward first, drop the answer, reset at the end of the window, and the landed rule.
 
-- a small config PR: schema, the `Fault` field, the default, table tests (rides ahead of proxy 2/5);
-- **proxy 2/5 (`latency`)**: implements `direction` for latency; its PLAN bullet "delay plus jitter per chunk in both directions" becomes "per `direction`, default both", and the echo-server tests cover each direction. This closes PLAN.md's open latency decision;
-- **proxy 3/5 (`down`)**: unchanged, and it asserts that `direction` is rejected;
-- **proxy 4/5 (fault program, applied counters)**: counters carry a direction, and the landed rule above for `latency`;
-- the **`blackhole`, `reset`, `bandwidth`** PR(s): each implements its direction column, the live-connection rule, and for `blackhole` the reset-at-end rule, with the per-direction landed rule;
-- the **HTTP `timeout`** PR: forward-then-withhold, the read-and-drop of the upstream response, reset-at-end, and the landed rule (a discarded response, not a drawn request).
+**The post-v1 backlog gains two items:** a per-scenario override of the overlap order, and a sampled per-request "never delivered" drop.
 
-**Folded into DESIGN.md on acceptance**: `direction` joins the fault map example and the `Fields` column for the four kinds in §4.5 (no new column), with the per-direction table and the two rules; `timeout`'s row says it forwards first; §6.6's landed check gains the per-direction sentence. PLAN.md's open latency decision and the proxy 2/5 bullet are updated then (`/sync-plan`), and SPEC.md's open question on latency direction is closed with the same answer. Nothing in the shop's code changes.
+**Folded into DESIGN.md on acceptance:**
+- §4.5: `direction` in the fault example and in the `Fields` column; the one-natural-way table; the live-connection and pause rules; `timeout` forwarding first; the overlap order.
+- §6.6: the landed-check sentence that counts effects, not attempts.
+- §6.7: the two deviation rows.
+- §10: the overlap question leaves the open questions.
+- PLAN.md: the open latency decision and the proxy 2/5 bullet are updated at the same time.
 
-**What becomes possible**: a scenario that loses payments' answers on purpose (`blackhole`, `direction: response` on `checkout -> payments`, or `timeout` at a rate), so the shop's reconciler and dedup are exercised by schedule rather than luck, and the `TIMEOUT_AS_FAILURE` and `RETRY_NEW_KEY` rows have a fault aimed at them.
+**What becomes possible:**
+- a scenario that drops payments' answers (`timeout`), cuts them (`reset, direction: response`), or holds them (`blackhole, direction: response`), so the shop's reconciler and dedup are exercised on a schedule rather than by luck;
+- `latency, direction: request` races a retry against the original.
 
-**What becomes harder**: the proxy's two copy loops each become a per-direction pipeline (the natural shape for every fault here, but every network fault now has three cases to test); `delay` under the default `both` is paid twice per call, which the docs must say plainly; applied counters need a direction label in the control service's message and the run record.
-
-**Open sub-questions for the maintainer**, each with the proposal above: whether `delay` under `both` should be one-way (paid twice per call, like a link) or per call; whether `timeout` should also take `direction: request` (hang without forwarding) now rather than when something needs it; whether a withheld-response connection should be reset at the fault's end or held until the caller closes.
+**What becomes harder:**
+- The proxy's two copy loops become a pipeline for each direction.
+- A paused `blackhole` must track bytes it hasn't read.
+- Overlapping faults need the fixed order.
+- The applied counters need a direction label in the control service and the run record.
