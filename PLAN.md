@@ -200,7 +200,7 @@ K3s moves out of DESIGN §8 step 4 so v1.0 ships compose-only ([ADR-0003](docs/a
 ## Phase 8 — Smart parallelism (v1.2; DESIGN §8 step 5)
 
 - [x] #54 ADR-0010 (accepted 2026-11-10): every scenario runs on every run; content addressing pins inputs for replay and never skips a scenario
-- [x] #PRNUM design: ADR-0010 folded into DESIGN.md and PLAN.md
+- [x] #61 design: ADR-0010 folded into DESIGN.md and PLAN.md
 - [ ] coordinator protocol: `kazu.coord.v1` Connect — lease a trial pair, expiry, report results
 - [ ] `kazu coordinator`: self-hosted, single process, state in SQLite
 - [ ] `kazu worker --coordinator <addr>`
