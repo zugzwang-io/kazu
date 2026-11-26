@@ -301,6 +301,18 @@ func TestOverlap(t *testing.T) {
 			"{ edge: checkout -> payments, fault: down, from: a }",
 			"{ edge: checkout -> payments, fault: down }",
 		), []string{overlapError(2, "faults[1]", "faults[2]", "down", "checkout -> payments", true)}},
+		{"crashes whose windows overlap", faults(
+			"{ service: payments, fault: crash, after: 20s, restart_after: 10s }",
+			"{ service: payments, fault: crash, after: 25s, restart_after: 5s }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both crash faults on payments and can be active at once; keep one, or space the crashes apart, so one comes after the other's restart`,
+		}},
+		{"a crash that never restarts, then any later crash", faults(
+			"{ service: payments, fault: crash, after: 20s }",
+			"{ service: payments, fault: crash, after: 1h, restart_after: 5s }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both crash faults on payments and can be active at once; keep one, or give faults[0] a restart_after, or space the crashes apart`,
+		}},
 		{"faults on traffic are reported once", faults(
 			"{ service: traffic, fault: pause }",
 			"{ service: traffic, fault: pause }",
@@ -407,9 +419,13 @@ func TestOverlapAccepts(t *testing.T) {
 			"{ service: payments, fault: cpu, load: 50% }",
 			"{ service: checkout, fault: cpu, load: 90% }",
 		)},
-		{"crashes are instant", faults(
-			"{ service: payments, fault: crash, after: 20s }",
+		{"crashes spaced past their restarts", faults(
 			"{ service: payments, fault: crash, after: 20s, restart_after: 5s }",
+			"{ service: payments, fault: crash, after: 60s, restart_after: 5s }",
+		)},
+		{"a crash at the moment the last one restarts", faults(
+			"{ service: payments, fault: crash, after: 20s, restart_after: 5s }",
+			"{ service: payments, fault: crash, after: 25s }",
 		)},
 	}
 	for _, tt := range tests {

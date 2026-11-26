@@ -14,21 +14,29 @@ import (
 // each of its declared inbound edges, and the service for process faults.
 // Two faults can't overlap when their windows count from the same point and
 // don't intersect, or when one is sequenced after the other's end through
-// from. Faults on undeclared targets or with a non-positive for are
-// skipped: they are already reported.
+// from. A crash's window runs until Kazu restarts the container, so its
+// length is restart_after. Faults on undeclared targets or with a
+// non-positive length are skipped: they are already reported.
 func (v *validator) overlaps(path []string, faults []Fault, byName map[string]int) {
 	at := func(i int, key string) []string {
 		return append(slices.Clone(path), "faults", strconv.Itoa(i), key)
 	}
-	ends := make([]bool, len(faults))
+	spans := make([]time.Duration, len(faults))
 	targets := make([][]string, len(faults))
 	for i, f := range faults {
-		ends[i] = v.node(at(i, "for")...) != nil
-		if !ends[i] || f.For > 0 {
+		key, d := "for", f.For
+		if f.Kind == Crash {
+			key, d = "restart_after", f.RestartAfter
+		}
+		spans[i] = forever
+		if v.node(at(i, key)...) != nil {
+			spans[i] = d
+		}
+		if d > 0 || spans[i] == forever {
 			targets[i] = v.targets(f)
 		}
 	}
-	s := schedule{faults: faults, byName: byName, ends: ends, after: map[[2]int]bool{}}
+	s := schedule{faults: faults, byName: byName, spans: spans, after: map[[2]int]bool{}}
 	ws := s.windows()
 	label := func(i int) string {
 		if faults[i].Name != "" {
@@ -46,8 +54,13 @@ func (v *validator) overlaps(path []string, faults []Fault, byName map[string]in
 				continue
 			}
 			fix := "sequence them with from: so one starts after the other ends"
-			if !ends[i] {
-				fix = fmt.Sprintf("give %s a for and sequence them with from: so one starts after the other ends", label(i))
+			switch open := spans[i] == forever; {
+			case a.Kind == Crash && open:
+				fix = fmt.Sprintf("give %s a restart_after, or space the crashes apart", label(i))
+			case a.Kind == Crash:
+				fix = "space the crashes apart, so one comes after the other's restart"
+			case open:
+				fix = fmt.Sprintf("give %s a for and %s", label(i), fix)
 			}
 			v.ps.add(append(slices.Clone(path), "faults", strconv.Itoa(j)), fmt.Sprintf(
 				"%s and %s are both %s faults on %s and can be active at once; keep one, or %s",
@@ -66,7 +79,7 @@ func (v *validator) targets(f Fault) []string {
 			return []string{f.Edge}
 		}
 		return nil
-	case f.Service == Traffic, f.Kind == Crash: // a crash is instant, never active alongside another
+	case f.Service == Traffic:
 		return nil
 	case f.Kind.Layer() == Process:
 		return []string{f.Service}
@@ -113,12 +126,12 @@ func later(t, d time.Duration) time.Duration {
 	return t + d
 }
 
-// schedule answers timing questions about one scenario's faults. ends
-// records which faults have a written for.
+// schedule answers timing questions about one scenario's faults. spans
+// holds each fault's length, forever when it has none.
 type schedule struct {
 	faults []Fault
 	byName map[string]int
-	ends   []bool
+	spans  []time.Duration
 	after  map[[2]int]bool
 }
 
@@ -160,10 +173,7 @@ func (s *schedule) windows() []*window {
 		if w.start == forever {
 			return nil
 		}
-		w.end = forever
-		if s.ends[i] {
-			w.end = later(w.start, f.For)
-		}
+		w.end = later(w.start, s.spans[i])
 		ws[i] = w
 		return w
 	}

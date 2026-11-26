@@ -112,6 +112,7 @@ Each direction of a connection is a pipeline. Bytes pass through these stages in
 - For a network fault, a `service: b` target counts as each of `b`'s inbound edges.
 - Windows are half-open: one ending at 30s and one starting at 30s don't overlap.
 - A fault with no `for` runs until traffic exits.
+- A `crash`'s window is `[after, after + restart_after)`; a crash with no `restart_after` never restarts, so its window is open-ended. A crash's window covers Kazu's own action (the kill and the restart it issues), not the service's recovery; how long the service takes to come back is system behaviour, so the check never depends on it.
 - Two faults whose windows both resolve to planned times (ADR-0004 resolves every wall-clock anchor when the plan is built) are compared as intervals.
 - Two faults anchored on the same request-count fault are compared by their offsets.
 - Two faults also can't overlap if one is sequenced after the other's end through `from:`, directly or through a chain or join. A link through `{ start: X }` counts only if X itself is sequenced after the first fault's end.
@@ -173,7 +174,7 @@ Deviations, recorded in DESIGN §6.7 on acceptance:
 3. `latency` takes `request` or `response`, defaulting to `response`. `delay` is the time added to a call, and there is no `both`.
 4. `timeout` is dropped. A sampled `latency` is already in the backlog. A request that is never delivered at all is reachable only with a partition that has no `for`.
 5. After review: `reset` takes `request` or `response` (default `request`), and draws per request on `http`/`grpc` edges.
-6. Amended 2026-11-26: the same-kind overlap rule covers every fault type; the target is the edge for network and HTTP faults and the service for process and resource faults.
+6. Amended 2026-11-26: the same-kind overlap rule covers every fault type; the target is the edge for network and HTTP faults and the service for process and resource faults. A crash's window is `[after, after + restart_after)`, open-ended without `restart_after`. A crash's window covers Kazu's own action (the kill and the restart it issues), not the service's recovery; how long the service takes to come back is system behaviour, so the check never depends on it.
 
 ## Consequences
 

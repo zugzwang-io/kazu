@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // A from naming no fault, or a loop, resolves to nothing rather than to a
 // wrong index, so the schedule is safe on anchors that don't resolve.
@@ -11,7 +14,7 @@ func TestScheduleUnresolvedAnchors(t *testing.T) {
 		{Name: "x", From: []Anchor{{Fault: "y", Start: true}}},
 		{Name: "y", From: []Anchor{{Fault: "x", Start: true}}},
 	}
-	s := schedule{faults: faults, byName: map[string]int{"a": 0, "x": 2, "y": 3}, ends: []bool{true, false, false, false}, after: map[[2]int]bool{}}
+	s := schedule{faults: faults, byName: map[string]int{"a": 0, "x": 2, "y": 3}, spans: []time.Duration{1, forever, forever, forever}, after: map[[2]int]bool{}}
 	if ws := s.windows(); ws[1] != nil {
 		t.Errorf("window from a missing anchor = %+v, want nil", ws[1])
 	}
