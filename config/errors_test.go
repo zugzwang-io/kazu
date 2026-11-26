@@ -39,10 +39,16 @@ func TestProblems(t *testing.T) {
 			`13:46: scenarios.a.faults[0].fault: "blackhole" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "partition"? it holds traffic both ways and delivers it when the window ends)`,
 		}},
 		{"timeout, dropped", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: timeout, rate: 5% }\n", []string{
-			`13:46: scenarios.a.faults[0].fault: "timeout" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "latency"? a delay longer than the caller's timeout makes it give up)`,
+			`13:46: scenarios.a.faults[0].fault: "timeout" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "latency"? a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet)`,
 		}},
 		{"latency both ways", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 1s, direction: both }\n", []string{
-			`13:77: scenarios.a.faults[0].direction: "both" is not one of "request", "response"`,
+			`13:77: scenarios.a.faults[0].direction: "both" is not one of "request", "response" (latency acts in one direction; to slow both streams use bandwidth)`,
+		}},
+		{"reset both ways", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: reset, rate: 5%, direction: both }\n", []string{
+			`13:74: scenarios.a.faults[0].direction: "both" is not one of "request", "response" (reset acts in one direction)`,
+		}},
+		{"latency in an unknown direction", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 1s, direction: upstream }\n", []string{
+			`13:77: scenarios.a.faults[0].direction: "upstream" is not one of "request", "response"`,
 		}},
 		{"a former fault kind elsewhere gets no fault hint", "scenarios: { a: { not_exercised: timeout } }\n", []string{
 			`10:34: scenarios.a.not_exercised: "timeout" is not one of "fail", "warn"`,

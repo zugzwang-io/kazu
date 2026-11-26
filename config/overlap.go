@@ -8,14 +8,28 @@ import (
 	"time"
 )
 
-// overlaps rejects two faults of the same kind on one edge unless they
-// provably can't be active at once, whatever their directions. A fault on a
-// service counts as one on each of its declared inbound edges. Two faults
-// can't overlap when their windows count from the same point and don't
-// intersect, or when one is sequenced after the other's end through from.
-// It needs anchors that resolve: every from names a fault, with no loops.
+// overlaps rejects two faults of the same kind on one target unless they
+// provably can't be active at once, whatever their directions. The target
+// is the edge for network and request faults, where a service stands for
+// each of its declared inbound edges, and the service for process faults.
+// Two faults can't overlap when their windows count from the same point and
+// don't intersect, or when one is sequenced after the other's end through
+// from. Faults on undeclared targets or with a non-positive for are
+// skipped: they are already reported.
 func (v *validator) overlaps(path []string, faults []Fault, byName map[string]int) {
-	ws := windows(faults, byName)
+	at := func(i int, key string) []string {
+		return append(slices.Clone(path), "faults", strconv.Itoa(i), key)
+	}
+	ends := make([]bool, len(faults))
+	targets := make([][]string, len(faults))
+	for i, f := range faults {
+		ends[i] = v.node(at(i, "for")...) != nil
+		if !ends[i] || f.For > 0 {
+			targets[i] = v.targets(f)
+		}
+	}
+	s := schedule{faults: faults, byName: byName, ends: ends, after: map[[2]int]bool{}}
+	ws := s.windows()
 	label := func(i int) string {
 		if faults[i].Name != "" {
 			return faults[i].Name
@@ -27,25 +41,35 @@ func (v *validator) overlaps(path []string, faults []Fault, byName map[string]in
 			if a.Kind != b.Kind {
 				continue
 			}
-			edge, shared := sharedEdge(v.faultEdges(a), v.faultEdges(b))
-			if !shared || ws[i].disjoint(ws[j]) || sequenced(faults, byName, j, i) || sequenced(faults, byName, i, j) {
+			target, shared := sharedTarget(targets[i], targets[j])
+			if !shared || ws[i].disjoint(ws[j]) || s.sequenced(j, i) || s.sequenced(i, j) {
 				continue
 			}
+			fix := "sequence them with from: so one starts after the other ends"
+			if !ends[i] {
+				fix = fmt.Sprintf("give %s a for and sequence them with from: so one starts after the other ends", label(i))
+			}
 			v.ps.add(append(slices.Clone(path), "faults", strconv.Itoa(j)), fmt.Sprintf(
-				"%s and %s are both %s faults on %s and can be active at once; keep one, or sequence them with from: so one starts after the other ends",
-				label(i), label(j), a.Kind, edge))
+				"%s and %s are both %s faults on %s and can be active at once; keep one, or %s",
+				label(i), label(j), a.Kind, target, fix))
 		}
 	}
 }
 
-// faultEdges returns the edges a fault acts on: its edge, or for a network
-// fault on a service, the service's declared inbound edges.
-func (v *validator) faultEdges(f Fault) []string {
-	if f.Edge != "" {
-		return []string{f.Edge}
-	}
-	if f.Kind.Layer() != Network {
+// targets returns what a fault acts on: its declared edge, a service's
+// declared inbound edges for a network fault, or the service for a process
+// fault.
+func (v *validator) targets(f Fault) []string {
+	switch {
+	case f.Edge != "":
+		if _, ok := v.cfg.Edge(f.Edge); ok {
+			return []string{f.Edge}
+		}
 		return nil
+	case f.Service == Traffic, f.Kind == Crash: // a crash is instant, never active alongside another
+		return nil
+	case f.Kind.Layer() == Process:
+		return []string{f.Service}
 	}
 	var names []string
 	for _, e := range v.cfg.Inbound(f.Service) {
@@ -54,10 +78,10 @@ func (v *validator) faultEdges(f Fault) []string {
 	return names
 }
 
-func sharedEdge(a, b []string) (string, bool) {
-	for _, e := range a {
-		if slices.Contains(b, e) {
-			return e, true
+func sharedTarget(a, b []string) (string, bool) {
+	for _, t := range a {
+		if slices.Contains(b, t) {
+			return t, true
 		}
 	}
 	return "", false
@@ -81,24 +105,46 @@ func (w *window) disjoint(o *window) bool {
 	return w != nil && o != nil && w.origin == o.origin && (w.end <= o.start || o.end <= w.start)
 }
 
+// later adds two non-negative durations, saturating at forever.
+func later(t, d time.Duration) time.Duration {
+	if t > forever-d {
+		return forever
+	}
+	return t + d
+}
+
+// schedule answers timing questions about one scenario's faults. ends
+// records which faults have a written for.
+type schedule struct {
+	faults []Fault
+	byName map[string]int
+	ends   []bool
+	after  map[[2]int]bool
+}
+
 // windows resolves every fault's window that can be known before the run.
-// A window is nil when its from joins anchors counted from different points.
-func windows(faults []Fault, byName map[string]int) []*window {
-	ws := make([]*window, len(faults))
-	seen := make([]bool, len(faults))
+// A window is nil when its from joins anchors counted from different
+// points, names no fault, or starts too late to hold.
+func (s *schedule) windows() []*window {
+	ws := make([]*window, len(s.faults))
+	seen := make([]bool, len(s.faults))
 	var resolve func(i int) *window
 	resolve = func(i int) *window {
 		if seen[i] {
 			return ws[i]
 		}
 		seen[i] = true
-		f := faults[i]
+		f := s.faults[i]
 		w := &window{origin: fromTraffic}
 		if f.AfterRequests > 0 {
 			w.origin = i
 		}
 		for n, a := range f.From {
-			aw := resolve(byName[a.Fault])
+			k, ok := s.byName[a.Fault]
+			if !ok {
+				return nil
+			}
+			aw := resolve(k)
 			if aw == nil || n > 0 && aw.origin != w.origin {
 				return nil
 			}
@@ -110,15 +156,18 @@ func windows(faults []Fault, byName map[string]int) []*window {
 				w.origin, w.start = aw.origin, t
 			}
 		}
-		w.start += f.After
+		w.start = later(w.start, f.After)
+		if w.start == forever {
+			return nil
+		}
 		w.end = forever
-		if f.For > 0 {
-			w.end = w.start + f.For
+		if s.ends[i] {
+			w.end = later(w.start, f.For)
 		}
 		ws[i] = w
 		return w
 	}
-	for i := range faults {
+	for i := range s.faults {
 		resolve(i)
 	}
 	return ws
@@ -126,11 +175,17 @@ func windows(faults []Fault, byName map[string]int) []*window {
 
 // sequenced reports whether fault j starts no earlier than fault i ends
 // through from: one of j's anchors is i's end, or the start or end of a
-// fault itself sequenced after i's end.
-func sequenced(faults []Fault, byName map[string]int, j, i int) bool {
-	for _, a := range faults[j].From {
-		k := byName[a.Fault]
-		if !a.Start && k == i || sequenced(faults, byName, k, i) {
+// fault itself sequenced after i's end. A loop sequences nothing.
+func (s *schedule) sequenced(j, i int) bool {
+	key := [2]int{j, i}
+	if done, ok := s.after[key]; ok {
+		return done
+	}
+	s.after[key] = false
+	for _, a := range s.faults[j].From {
+		k, ok := s.byName[a.Fault]
+		if ok && (!a.Start && k == i || s.sequenced(k, i)) {
+			s.after[key] = true
 			return true
 		}
 	}

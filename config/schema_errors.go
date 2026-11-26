@@ -76,6 +76,9 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 		if r, ok := replacedValues[got]; ok && slices.Contains(want, r.value) {
 			hint = fmt.Sprintf(" (did you mean %q? %s)", r.value, r.why)
 		}
+		if why, ok := oneWay[faultKindAt(root, path)]; ok && got == "both" && path[len(path)-1] == "direction" {
+			hint = " (" + why + ")"
+		}
 		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + hint
 	case *kind.Const:
 		return fmt.Sprintf("%q is not allowed here; the only text value is %q", fmt.Sprint(k.Got), fmt.Sprint(k.Want))
@@ -103,7 +106,23 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 // its job now.
 var replacedValues = map[string]struct{ value, why string }{
 	"blackhole": {"partition", "it holds traffic both ways and delivers it when the window ends"},
-	"timeout":   {"latency", "a delay longer than the caller's timeout makes it give up"},
+	"timeout":   {"latency", "a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet"},
+}
+
+// oneWay explains, per kind, why its direction can't be both.
+var oneWay = map[string]string{
+	"latency": "latency acts in one direction; to slow both streams use bandwidth",
+	"reset":   "reset acts in one direction",
+}
+
+// faultKindAt returns the kind of the fault whose field is at path, or "".
+func faultKindAt(root *yaml.Node, path []string) string {
+	if parent := lookup(root, path[:len(path)-1], false); parent != nil {
+		if f := child(parent, "fault"); f != nil {
+			return f.Value
+		}
+	}
+	return ""
 }
 
 // falseSchemaMessage explains a key the schema forbids in this particular
@@ -113,10 +132,8 @@ func falseSchemaMessage(root *yaml.Node, path []string, schemaURL string) string
 	if m := dependentSchema.FindStringSubmatch(schemaURL); m != nil {
 		return fmt.Sprintf("%q can't go with %q", key, m[1])
 	}
-	if parent := lookup(root, path[:len(path)-1], false); parent != nil {
-		if f := child(parent, "fault"); f != nil {
-			return fmt.Sprintf("%q is not a field of a %s fault", key, f.Value)
-		}
+	if kind := faultKindAt(root, path); kind != "" {
+		return fmt.Sprintf("%q is not a field of a %s fault", key, kind)
 	}
 	return fmt.Sprintf("%q is not allowed here", key)
 }

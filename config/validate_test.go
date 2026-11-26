@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -181,7 +182,18 @@ const (
 	planned = "{ name: t, edge: checkout -> postgres, fault: down, after: 30s, for: 5s }"
 )
 
-// Two faults of one kind on one edge are rejected unless they provably
+// overlapError is the overlap problem reported at faults[j] (line 13+j)
+// against fault a. open says a has no for.
+func overlapError(j int, a, b, kind, target string, open bool) string {
+	fix := "sequence them with from: so one starts after the other ends"
+	if open {
+		fix = "give " + a + " a for and " + fix
+	}
+	return fmt.Sprintf("%d:9: scenarios.a.faults[%d]: %s and %s are both %s faults on %s and can be active at once; keep one, or %s",
+		13+j, j, a, b, kind, target, fix)
+}
+
+// Two faults of one kind on one target are rejected unless they provably
 // can't be active at once.
 func TestOverlap(t *testing.T) {
 	tests := []struct {
@@ -192,14 +204,12 @@ func TestOverlap(t *testing.T) {
 			"{ edge: checkout -> payments, fault: latency, delay: 1s }",
 			"{ edge: checkout -> payments, fault: latency, delay: 2s, direction: request }",
 		), []string{
-			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both latency faults on checkout -> payments and can be active at once; keep one, or give faults[0] a for and sequence them with from: so one starts after the other ends`,
 		}},
 		{"bandwidth one way each is both", faults(
 			"{ edge: checkout -> payments, fault: bandwidth, limit: 1mbps, direction: request }",
 			"{ edge: checkout -> payments, fault: bandwidth, limit: 1mbps, direction: response }",
-		), []string{
-			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both bandwidth faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
-		}},
+		), []string{overlapError(1, "faults[0]", "faults[1]", "bandwidth", "checkout -> payments", true)}},
 		{"planned windows intersect", faults(
 			"{ name: first, edge: checkout -> payments, fault: down, after: 20s, for: 20s }",
 			"{ name: second, edge: checkout -> payments, fault: down, after: 39s, for: 20s }",
@@ -209,51 +219,107 @@ func TestOverlap(t *testing.T) {
 		{"a fault without for lasts until traffic exits", faults(
 			"{ edge: checkout -> payments, fault: down, after: 20s }",
 			"{ edge: checkout -> payments, fault: down, after: 1h, for: 5s }",
-		), []string{
-			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both down faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
-		}},
+		), []string{overlapError(1, "faults[0]", "faults[1]", "down", "checkout -> payments", true)}},
+		{"a partition overlaps itself", faults(
+			"{ edge: checkout -> payments, fault: partition, after: 20s, for: 10s }",
+			"{ edge: checkout -> payments, fault: partition, after: 25s, for: 10s }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "partition", "checkout -> payments", false)}},
 		{"a service counts as each of its inbound edges", faults(
 			"{ edge: checkout -> payments, fault: down, after: 25s, for: 10s }",
 			"{ service: postgres, fault: down, after: 20s, for: 10s }",
 			"{ edge: payments -> postgres, fault: down, after: 25s, for: 10s }",
+		), []string{overlapError(2, "faults[1]", "faults[2]", "down", "payments -> postgres", false)}},
+		{"an edge, then a service whose first inbound edge it isn't", faults(
+			"{ edge: payments -> postgres, fault: down, for: 10s }",
+			"{ service: postgres, fault: down, for: 10s }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "down", "payments -> postgres", false)}},
+		{"two faults on one service", faults(
+			"{ service: postgres, fault: down, for: 10s }",
+			"{ service: postgres, fault: down, after: 5s, for: 10s }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "down", "checkout -> postgres", false)}},
+		{"process faults on one service", faults(
+			"{ service: payments, fault: cpu, load: 50% }",
+			"{ service: payments, fault: cpu, load: 90%, after: 1m }",
+			"{ service: payments, fault: pause, after: 10s, for: 5s }",
+			"{ service: payments, fault: pause, after: 12s, for: 5s }",
 		), []string{
-			`15:9: scenarios.a.faults[2]: faults[1] and faults[2] are both down faults on payments -> postgres and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+			overlapError(1, "faults[0]", "faults[1]", "cpu", "payments", true),
+			overlapError(3, "faults[2]", "faults[3]", "pause", "payments", false),
 		}},
+		{"a planned fault and a request-count fault", faults(
+			"{ edge: checkout -> payments, fault: down, after: 20s, for: 10s }",
+			"{ edge: checkout -> payments, fault: down, after_requests: 100, for: 1s }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "down", "checkout -> payments", false)}},
 		{"different request-count faults", faults(
 			"{ name: a, edge: checkout -> payments, fault: errors, rate: 5%, code: 503, after_requests: 100, for: 5s }",
 			"{ edge: checkout -> payments, fault: errors, rate: 5%, code: 503, after_requests: 500 }",
-		), []string{
-			`14:9: scenarios.a.faults[1]: a and faults[1] are both errors faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
-		}},
+		), []string{overlapError(1, "a", "faults[1]", "errors", "checkout -> payments", false)}},
 		{"windows anchored on different request-count faults", faults(
 			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
 			counted,
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: r, after: 1h }",
-		), []string{
-			`15:9: scenarios.a.faults[2]: a and faults[2] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
-		}},
+		), []string{overlapError(2, "a", "faults[2]", "latency", "checkout -> payments", false)}},
 		{"a join of anchors counted from different points", faults(
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, after: 100s, for: 100s }",
 			counted,
 			planned,
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: [t, r], for: 10s }",
-		), []string{
-			`16:9: scenarios.a.faults[3]: faults[0] and faults[3] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
-		}},
+		), []string{overlapError(3, "faults[0]", "faults[3]", "latency", "checkout -> payments", false)}},
+		{"a window from another's start", faults(
+			"{ name: a, edge: checkout -> payments, fault: down, for: 10s }",
+			"{ edge: checkout -> payments, fault: down, from: { start: a }, after: 5s, for: 1s }",
+		), []string{overlapError(1, "a", "faults[1]", "down", "checkout -> payments", false)}},
+		{"a join starts at its latest anchor", faults(
+			"{ edge: checkout -> payments, fault: down, after: 42s, for: 8s }",
+			"{ name: a, edge: payments -> postgres, fault: down, for: 10s }",
+			"{ name: b, edge: checkout -> postgres, fault: down, for: 40s }",
+			"{ edge: checkout -> payments, fault: down, from: [a, b], for: 5s }",
+		), []string{overlapError(3, "faults[0]", "faults[3]", "down", "checkout -> payments", false)}},
+		{"a join starts at its latest anchor, listed first", faults(
+			"{ edge: checkout -> payments, fault: down, after: 42s, for: 8s }",
+			"{ name: a, edge: payments -> postgres, fault: down, for: 10s }",
+			"{ name: b, edge: checkout -> postgres, fault: down, for: 40s }",
+			"{ edge: checkout -> payments, fault: down, from: [b, a], for: 5s }",
+		), []string{overlapError(3, "faults[0]", "faults[3]", "down", "checkout -> payments", false)}},
 		{"a start link to the first fault", faults(
 			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
 			planned,
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: [{ start: a }, t], after: 1h }",
-		), []string{
-			`15:9: scenarios.a.faults[2]: a and faults[2] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
-		}},
+		), []string{overlapError(2, "a", "faults[2]", "latency", "checkout -> payments", false)}},
 		{"a start link to a fault not sequenced after the first", faults(
 			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
 			planned,
 			"{ name: m, edge: payments -> postgres, fault: down, from: [{ start: a }, t], for: 5s }",
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: m } }",
+		), []string{overlapError(3, "a", "faults[3]", "latency", "checkout -> payments", false)}},
+		{"a window too long to hold still overlaps", faults(
+			"{ edge: checkout -> payments, fault: down, after: 2000000h, for: 2000000h }",
+			"{ edge: checkout -> payments, fault: down }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "down", "checkout -> payments", false)}},
+		{"a start too late to hold still overlaps", faults(
+			"{ name: a, edge: checkout -> postgres, fault: down, after: 2000000h, for: 2000000h }",
+			"{ edge: checkout -> payments, fault: down, from: a }",
+			"{ edge: checkout -> payments, fault: down }",
+		), []string{overlapError(2, "faults[1]", "faults[2]", "down", "checkout -> payments", true)}},
+		{"faults on traffic are reported once", faults(
+			"{ service: traffic, fault: pause }",
+			"{ service: traffic, fault: pause }",
 		), []string{
-			`16:9: scenarios.a.faults[3]: a and faults[3] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+			`13:20: scenarios.a.faults[0].service: traffic is the load, not part of the system; faults go on the system's services and edges`,
+			`14:20: scenarios.a.faults[1].service: traffic is the load, not part of the system; faults go on the system's services and edges`,
+		}},
+		{"a zero for is reported once", faults(
+			"{ edge: checkout -> payments, fault: down, after: 30s, for: 0s }",
+			"{ edge: checkout -> payments, fault: down, after: 25s }",
+		), []string{
+			`13:69: scenarios.a.faults[0].for: must be longer than zero`,
+		}},
+		{"faults on an undeclared edge are reported once", faults(
+			"{ edge: checkout -> paymnts, fault: down }",
+			"{ edge: checkout -> paymnts, fault: down }",
+		), []string{
+			`13:17: scenarios.a.faults[0].edge: checkout -> paymnts is not a declared edge; faults go only on edges listed under edges (did you mean "checkout -> payments"?)`,
+			`14:17: scenarios.a.faults[1].edge: checkout -> paymnts is not a declared edge; faults go only on edges listed under edges (did you mean "checkout -> payments"?)`,
 		}},
 		{"anchors that don't resolve are reported instead", faults(
 			"{ name: x, edge: checkout -> payments, fault: down, from: { start: y } }",
@@ -279,21 +345,36 @@ func TestOverlap(t *testing.T) {
 }
 
 // Pairs that provably can't be active at once, and pairs the rule doesn't
-// cover.
+// compare.
 func TestOverlapAccepts(t *testing.T) {
 	tests := []struct{ name, yaml string }{
 		{"half-open windows that touch", faults(
 			"{ edge: checkout -> payments, fault: down, after: 20s, for: 10s }",
 			"{ edge: checkout -> payments, fault: down, after: 30s, for: 10s }",
 		)},
+		{"half-open windows that touch, later one first", faults(
+			"{ edge: checkout -> payments, fault: down, after: 30s, for: 10s }",
+			"{ edge: checkout -> payments, fault: down, after: 20s, for: 10s }",
+		)},
 		{"offsets from one request-count fault", faults(
 			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: a }, after: 10s }",
+		)},
+		{"a join that starts after the other ends", faults(
+			"{ edge: checkout -> payments, fault: down, after: 12s, for: 20s }",
+			"{ name: a, edge: payments -> postgres, fault: down, for: 10s }",
+			"{ name: b, edge: checkout -> postgres, fault: down, for: 40s }",
+			"{ edge: checkout -> payments, fault: down, from: [a, b], for: 5s }",
 		)},
 		{"from the first fault's end, at a time known only at run time", faults(
 			counted, planned,
 			"{ name: x, edge: checkout -> payments, fault: latency, delay: 1s, from: [r, t], for: 10s }",
 			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: x }",
+		)},
+		{"sequenced after a fault listed later", faults(
+			"{ edge: checkout -> payments, fault: down, from: [r, t] }",
+			"{ name: r, edge: checkout -> payments, fault: down, after_requests: 100, for: 5s }",
+			planned,
 		)},
 		{"through a chain", faults(
 			counted, planned,
@@ -322,9 +403,13 @@ func TestOverlapAccepts(t *testing.T) {
 			"{ edge: checkout -> postgres, fault: down }",
 			"{ edge: payments -> postgres, fault: down }",
 		)},
-		{"process faults have no edge", faults(
+		{"process faults on different services", faults(
 			"{ service: payments, fault: cpu, load: 50% }",
-			"{ service: payments, fault: cpu, load: 90% }",
+			"{ service: checkout, fault: cpu, load: 90% }",
+		)},
+		{"crashes are instant", faults(
+			"{ service: payments, fault: crash, after: 20s }",
+			"{ service: payments, fault: crash, after: 20s, restart_after: 5s }",
 		)},
 	}
 	for _, tt := range tests {
@@ -333,6 +418,31 @@ func TestOverlapAccepts(t *testing.T) {
 				t.Errorf("rejected:\n%v", err)
 			}
 		})
+	}
+}
+
+// Deep from chains with joins resolve in polynomial time: c_k starts from
+// the starts of c_(k-1) and c_(k-2), so an unremembered walk doubles per link.
+func TestOverlapLongChains(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("system: docker-compose.yml\ntraffic: { image: grafana/k6:1.0.0 }\nedges:\n  traffic -> checkout: http\n  checkout -> payments: http\n")
+	const n = 60
+	for k := range n {
+		fmt.Fprintf(&b, "  checkout -> s%d: tcp\n", k)
+	}
+	b.WriteString("scenarios:\n  a:\n    faults:\n")
+	b.WriteString("      - { name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }\n")
+	b.WriteString("      - { name: t, edge: traffic -> checkout, fault: down, after: 30s, for: 5s }\n")
+	b.WriteString("      - { name: c0, edge: checkout -> s0, fault: down, from: [{ start: a }, t] }\n")
+	b.WriteString("      - { name: c1, edge: checkout -> s1, fault: down, from: [{ start: c0 }, t] }\n")
+	for k := 2; k < n; k++ {
+		fmt.Fprintf(&b, "      - { name: c%d, edge: checkout -> s%d, fault: down, from: [{ start: c%d }, { start: c%d }] }\n", k, k, k-1, k-2)
+	}
+	fmt.Fprintf(&b, "      - { edge: checkout -> payments, fault: latency, delay: 1s, from: { start: c%d } }\n", n-1)
+	_, err := config.Parse("kazu.yaml", []byte(b.String()))
+	want := fmt.Sprintf("faults[%d]: a and faults[%d] are both latency faults on checkout -> payments", n+2, n+2)
+	if err == nil || !strings.Contains(err.Error(), want) || strings.Count(err.Error(), "\n") != 0 {
+		t.Errorf("got %v\nwant one problem containing %q", err, want)
 	}
 }
 

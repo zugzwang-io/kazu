@@ -108,8 +108,8 @@ Each direction of a connection is a pipeline. Bytes pass through these stages in
 - **`errors`** answers a drawn request itself, and never forwards it. Its answer enters the response direction at the `latency` stage.
 - **`latency` and `bandwidth`** apply to what is written, *including the proxy's own error answers*. So `latency` (response) plus `errors` gives a **slow error**: the 503 arrives `delay` late, which is how a struggling dependency usually fails.
 
-**Two faults of the same kind on one edge are rejected when the config loads, unless they can't overlap.** That includes the same kind in different directions; otherwise `bandwidth` with `request` plus `bandwidth` with `response` would be a second way to write `both`. Two latencies or two error rates have no single obvious meaning, so the user picks one or sequences them. The rule:
-- A `service: b` target counts as each of `b`'s inbound edges.
+**Two faults of the same kind on one target are rejected when the config loads, unless they can't overlap.** This covers every fault type. The target is the edge for network and HTTP faults, and the service for process and resource faults (`crash`, `pause`, `cpu`, `memory`, `disk_full`). That includes the same kind in different directions; otherwise `bandwidth` with `request` plus `bandwidth` with `response` would be a second way to write `both`. Two latencies, two error rates or two CPU loads have no single obvious meaning, so the user picks one or sequences them. The rule:
+- For a network fault, a `service: b` target counts as each of `b`'s inbound edges.
 - Windows are half-open: one ending at 30s and one starting at 30s don't overlap.
 - A fault with no `for` runs until traffic exits.
 - Two faults whose windows both resolve to planned times (ADR-0004 resolves every wall-clock anchor when the plan is built) are compared as intervals.
@@ -173,6 +173,7 @@ Deviations, recorded in DESIGN §6.7 on acceptance:
 3. `latency` takes `request` or `response`, defaulting to `response`. `delay` is the time added to a call, and there is no `both`.
 4. `timeout` is dropped. A sampled `latency` is already in the backlog. A request that is never delivered at all is reachable only with a partition that has no `for`.
 5. After review: `reset` takes `request` or `response` (default `request`), and draws per request on `http`/`grpc` edges.
+6. Amended 2026-11-26: the same-kind overlap rule covers every fault type; the target is the edge for network and HTTP faults and the service for process and resource faults.
 
 ## Consequences
 
