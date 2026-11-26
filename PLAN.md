@@ -87,7 +87,7 @@ Checks:
 
 - [x] #53 ADR-0009 (accepted 2026-10-29; superseded by ADR-0011): a `sometimes` check; a check that never saw its signal is *not exercised*, never a pass
 - [x] #57 ADR-0011 (accepted 2026-11-10): every check declares `requires:` (eligibility) apart from its decision; an ineligible check is *not exercised*; supersedes ADR-0009's `sometimes`
-- [x] #N design: ADR-0011 folded into DESIGN.md (§2, §4.4, §4.6, §4.8, §6.6, §6.7)
+- [x] #62 design: ADR-0011 folded into DESIGN.md (§2, §4.4, §4.6, §4.8, §6.6, §6.7)
 - [ ] checks 1/4: `sql:` one-line check run by the host through `connections:` (no SDK): passes when the query returns no rows; reads only the first few rows, under a statement timeout. On the slice
 - [ ] checks 2/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
 - [ ] checks 3/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
