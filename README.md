@@ -57,6 +57,50 @@ kazu run  ·  suite pr  ·  base main@9c41e2 vs head a1f3c9
 
 Every run prints an ID for its stored record, and every failure prints the command that reproduces it, e.g. `kazu replay r_2fj9 --trial 2`.
 
+## Faults
+
+Each fault produces one distinct outcome; there is exactly one natural way to express each. The caller is the service on the left of an edge (`checkout` in `checkout -> payments`), the callee is the one on the right.
+
+### Network faults (on a declared edge, or every declared edge into a service)
+
+| Fault | Mimics | What the callee sees | What the caller sees | `direction` | Applies to |
+|---|---|---|---|---|---|
+| `latency` | a slow dependency or slow link | `response` (default): the request on time. `request`: the request `delay` late | the answer `delay` late. If `delay` is longer than the caller's timeout, it gives up: **response loss, silent** | `request` or `response`, default `response` | every request in the window |
+| `partition` | a network split that heals | nothing during the window. When it heals, everything held, including requests whose callers have since given up | silence both ways during the window. Held traffic is delivered on heal; if the caller already gave up, the answer goes to a closed connection | none (always both ways) | every connection, live and new |
+| `reset` | a peer crashing mid-conversation, or a load balancer or firewall killing connections | `request` (default): never sees the cut request. `response`: processed it, and the answer is cut off | `ECONNRESET` straight away. With `response`: **response loss, with an error** | `request` or `response`, default `request` | a sampled share of requests (`rate`); on `tcp` edges, of connections |
+| `bandwidth` | a congested link | data arrives throttled | large transfers slow down; small requests barely change | `request`, `response` or `both`, default `both` (each direction gets its own limit) | every connection in the window |
+| `down` | a service unreachable or refusing connections | nothing: new connections refused, live ones reset | `ECONNREFUSED` on connect (definitely not processed); `ECONNRESET` on live connections | none | every connection in the window |
+
+### HTTP/gRPC faults (on `http` or `grpc` edges)
+
+| Fault | Mimics | What the callee sees | What the caller sees | Applies to |
+|---|---|---|---|---|
+| `errors` | a dependency returning errors | never sees the request; the proxy answers | the configured status (e.g. 503) or gRPC code | a sampled share of requests (`rate`) |
+
+### Process and resource faults (on a service)
+
+| Fault | Mimics | What the service does | What its callers see |
+|---|---|---|---|
+| `crash` | a process dying | killed, then restarted in place after `restart_after` | resets on live connections, refused connections until it is back |
+| `pause` | a process frozen (a long GC pause, a stopped VM) | frozen for the window, then carries on | silence: connections stay open with no answers |
+| `cpu`, `memory` | a starved host | runs under CPU or memory pressure (mechanism still open: a load or a quota) | slower answers, or an out-of-memory kill |
+| `disk_full` | a full disk | writes fail with "no space left" | whatever errors the service returns |
+
+### When faults overlap on one edge
+
+Bytes in each direction pass through these stages in order:
+
+`down` → `partition` (read gate) → `reset` → `errors` → `latency` → `bandwidth` → `partition` (write gate)
+
+- `down` always wins.
+- Nothing crosses a partition, not even Kazu's own error answers.
+- `reset` beats `errors`, so a request drawn by both is cut.
+- Error answers pass through response latency, which gives slow errors.
+
+Two faults of the same type overlapping on one edge are rejected; sequence them with `from:` instead.
+
+Response loss, where the callee did the work but the caller never gets the answer, has two forms: silent (`latency` past the caller's timeout) and with an error (`reset` with `direction: response`).
+
 ## Principles
 
 - **A fault-injection and assertion runtime, nothing more.** You provide a complete, isolated system (docker compose, or Kubernetes manifests); Kazu owns the wires between services and the checks.

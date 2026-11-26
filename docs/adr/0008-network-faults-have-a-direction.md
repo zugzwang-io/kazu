@@ -1,7 +1,7 @@
 # ADR-0008: Network faults have a direction; `blackhole` becomes `partition`; `timeout` is dropped
 
 Date: 2026-10-28
-Status: Proposed
+Status: Accepted (2026-11-26)
 
 ## Context
 
