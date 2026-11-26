@@ -48,9 +48,6 @@ func TestRules(t *testing.T) {
 			`13:61: scenarios.a.faults[0].delay: must be longer than zero`,
 			`13:70: scenarios.a.faults[0].for: must be longer than zero`,
 		}},
-		{"request fault on a tcp edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> postgres, fault: timeout, rate: 5% }\n", []string{
-			`13:17: scenarios.a.faults[0].edge: timeout faults need an http or grpc edge; checkout -> postgres is tcp, so the proxy sees bytes, not requests`,
-		}},
 		{"errors fault on a tcp edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> postgres, fault: errors, rate: 5%, code: 503 }\n", []string{
 			`13:17: scenarios.a.faults[0].edge: errors faults need an http or grpc edge; checkout -> postgres is tcp, so the proxy sees bytes, not requests`,
 		}},
@@ -172,6 +169,173 @@ func TestAnchorRules(t *testing.T) {
 	}
 }
 
+// faults is a scenario a with the given faults, one per line from line 13.
+func faults(lines ...string) string {
+	return "scenarios:\n  a:\n    faults:\n      - " + strings.Join(lines, "\n      - ") + "\n"
+}
+
+// Shared by the overlap cases: counted starts after a request count, planned
+// at a time, so a from joining both resolves only at run time.
+const (
+	counted = "{ name: r, edge: traffic -> checkout, fault: down, after_requests: 100, for: 5s }"
+	planned = "{ name: t, edge: checkout -> postgres, fault: down, after: 30s, for: 5s }"
+)
+
+// Two faults of one kind on one edge are rejected unless they provably
+// can't be active at once.
+func TestOverlap(t *testing.T) {
+	tests := []struct {
+		name, yaml string
+		want       []string
+	}{
+		{"same kind in different directions", faults(
+			"{ edge: checkout -> payments, fault: latency, delay: 1s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 2s, direction: request }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"bandwidth one way each is both", faults(
+			"{ edge: checkout -> payments, fault: bandwidth, limit: 1mbps, direction: request }",
+			"{ edge: checkout -> payments, fault: bandwidth, limit: 1mbps, direction: response }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both bandwidth faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"planned windows intersect", faults(
+			"{ name: first, edge: checkout -> payments, fault: down, after: 20s, for: 20s }",
+			"{ name: second, edge: checkout -> payments, fault: down, after: 39s, for: 20s }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: first and second are both down faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"a fault without for lasts until traffic exits", faults(
+			"{ edge: checkout -> payments, fault: down, after: 20s }",
+			"{ edge: checkout -> payments, fault: down, after: 1h, for: 5s }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both down faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"a service counts as each of its inbound edges", faults(
+			"{ edge: checkout -> payments, fault: down, after: 25s, for: 10s }",
+			"{ service: postgres, fault: down, after: 20s, for: 10s }",
+			"{ edge: payments -> postgres, fault: down, after: 25s, for: 10s }",
+		), []string{
+			`15:9: scenarios.a.faults[2]: faults[1] and faults[2] are both down faults on payments -> postgres and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"different request-count faults", faults(
+			"{ name: a, edge: checkout -> payments, fault: errors, rate: 5%, code: 503, after_requests: 100, for: 5s }",
+			"{ edge: checkout -> payments, fault: errors, rate: 5%, code: 503, after_requests: 500 }",
+		), []string{
+			`14:9: scenarios.a.faults[1]: a and faults[1] are both errors faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"windows anchored on different request-count faults", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			counted,
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: r, after: 1h }",
+		), []string{
+			`15:9: scenarios.a.faults[2]: a and faults[2] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"a join of anchors counted from different points", faults(
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, after: 100s, for: 100s }",
+			counted,
+			planned,
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: [t, r], for: 10s }",
+		), []string{
+			`16:9: scenarios.a.faults[3]: faults[0] and faults[3] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"a start link to the first fault", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			planned,
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: [{ start: a }, t], after: 1h }",
+		), []string{
+			`15:9: scenarios.a.faults[2]: a and faults[2] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"a start link to a fault not sequenced after the first", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			planned,
+			"{ name: m, edge: payments -> postgres, fault: down, from: [{ start: a }, t], for: 5s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: m } }",
+		), []string{
+			`16:9: scenarios.a.faults[3]: a and faults[3] are both latency faults on checkout -> payments and can be active at once; keep one, or sequence them with from: so one starts after the other ends`,
+		}},
+		{"anchors that don't resolve are reported instead", faults(
+			"{ name: x, edge: checkout -> payments, fault: down, from: { start: y } }",
+			"{ name: y, edge: checkout -> payments, fault: down, from: { start: x } }",
+		), []string{
+			`13:67: scenarios.a.faults[0].from: faults count from each other in a loop: x -> y -> x`,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.Parse("kazu.yaml", []byte(base+tt.yaml))
+			var got []string
+			if err != nil {
+				for _, line := range strings.Split(err.Error(), "\n") {
+					got = append(got, strings.TrimPrefix(line, "kazu.yaml:"))
+				}
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
+}
+
+// Pairs that provably can't be active at once, and pairs the rule doesn't
+// cover.
+func TestOverlapAccepts(t *testing.T) {
+	tests := []struct{ name, yaml string }{
+		{"half-open windows that touch", faults(
+			"{ edge: checkout -> payments, fault: down, after: 20s, for: 10s }",
+			"{ edge: checkout -> payments, fault: down, after: 30s, for: 10s }",
+		)},
+		{"offsets from one request-count fault", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: a }, after: 10s }",
+		)},
+		{"from the first fault's end, at a time known only at run time", faults(
+			counted, planned,
+			"{ name: x, edge: checkout -> payments, fault: latency, delay: 1s, from: [r, t], for: 10s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: x }",
+		)},
+		{"through a chain", faults(
+			counted, planned,
+			"{ name: x, edge: checkout -> payments, fault: latency, delay: 1s, from: [r, t], for: 10s }",
+			"{ name: m, edge: payments -> postgres, fault: down, from: x, for: 5s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: m }",
+		)},
+		{"through a join", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			planned,
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: [a, t] }",
+		)},
+		{"through a start link to a fault sequenced after the first", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			planned,
+			"{ name: m, edge: payments -> postgres, fault: down, from: [a, t], for: 5s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: m } }",
+		)},
+		{"different kinds at once", faults(
+			"{ edge: checkout -> payments, fault: latency, delay: 1s }",
+			"{ edge: checkout -> payments, fault: reset, rate: 5% }",
+			"{ edge: checkout -> payments, fault: errors, rate: 5%, code: 503 }",
+			"{ service: payments, fault: bandwidth, limit: 1mbps }",
+		)},
+		{"the same kind on different edges", faults(
+			"{ edge: checkout -> postgres, fault: down }",
+			"{ edge: payments -> postgres, fault: down }",
+		)},
+		{"process faults have no edge", faults(
+			"{ service: payments, fault: cpu, load: 50% }",
+			"{ service: payments, fault: cpu, load: 90% }",
+		)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := config.Parse("kazu.yaml", []byte(base+tt.yaml)); err != nil {
+				t.Errorf("rejected:\n%v", err)
+			}
+		})
+	}
+}
+
 // Check rules need a second connection, so they get their own document.
 func TestCheckRules(t *testing.T) {
 	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
@@ -245,22 +409,18 @@ func TestRulesAccept(t *testing.T) {
 // on grpc edges, whatever the file wrote.
 func TestStatusCodes(t *testing.T) {
 	accept := map[string]string{
-		"payments -> fraud, fault: errors, rate: 5%, code: 14":           "UNAVAILABLE",
-		"payments -> fraud, fault: errors, rate: 5%, code: unavailable":  "UNAVAILABLE",
-		"payments -> fraud, fault: errors, rate: 5%, code: DATA_LOSS":    "DATA_LOSS",
-		"checkout -> payments, fault: errors, rate: 5%, code: 503":       "503",
-		"checkout -> payments, fault: errors, rate: 5%, code: 400":       "400",
-		"checkout -> payments, fault: errors, rate: 5%, code: 599":       "599",
-		"checkout -> payments, fault: errors, rate: 5%, code: '503'":     "503",
-		"payments -> fraud, fault: timeout, rate: 5%, code: UNAVAILABLE": "UNAVAILABLE",
+		"payments -> fraud, fault: errors, rate: 5%, code: 14":          "UNAVAILABLE",
+		"payments -> fraud, fault: errors, rate: 5%, code: unavailable": "UNAVAILABLE",
+		"payments -> fraud, fault: errors, rate: 5%, code: DATA_LOSS":   "DATA_LOSS",
+		"checkout -> payments, fault: errors, rate: 5%, code: 503":      "503",
+		"checkout -> payments, fault: errors, rate: 5%, code: 400":      "400",
+		"checkout -> payments, fault: errors, rate: 5%, code: 599":      "599",
+		"checkout -> payments, fault: errors, rate: 5%, code: '503'":    "503",
 	}
 	for fields, want := range accept {
 		src := mixed + "scenarios:\n  a:\n    faults:\n      - { edge: " + fields + " }\n"
 		cfg, err := config.Parse("kazu.yaml", []byte(src))
 		if err != nil {
-			if strings.Contains(fields, "timeout") {
-				continue // timeout takes no code; the schema says so
-			}
 			t.Errorf("%s: %v", fields, err)
 			continue
 		}

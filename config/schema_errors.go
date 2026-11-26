@@ -72,7 +72,11 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 			want[i] = fmt.Sprint(w)
 		}
 		got := fmt.Sprint(k.Got)
-		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + suggest(got, want)
+		hint := suggest(got, want)
+		if r, ok := replacedValues[got]; ok && slices.Contains(want, r.value) {
+			hint = fmt.Sprintf(" (did you mean %q? %s)", r.value, r.why)
+		}
+		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + hint
 	case *kind.Const:
 		return fmt.Sprintf("%q is not allowed here; the only text value is %q", fmt.Sprint(k.Got), fmt.Sprint(k.Want))
 	case *kind.Pattern:
@@ -93,6 +97,13 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 	default:
 		return ve.ErrorKind.LocalizedString(printer)
 	}
+}
+
+// replacedValues are values Kazu once took, each with the one that does
+// its job now.
+var replacedValues = map[string]struct{ value, why string }{
+	"blackhole": {"partition", "it holds traffic both ways and delivers it when the window ends"},
+	"timeout":   {"latency", "a delay longer than the caller's timeout makes it give up"},
 }
 
 // falseSchemaMessage explains a key the schema forbids in this particular

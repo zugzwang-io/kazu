@@ -52,6 +52,15 @@ scenarios:
       - { edge: traffic -> checkout, fault: latency, delay: 50ms, from: [db-down, { start: slow-pay }], after: 5s }
     checks:
       - recovers: { service: checkout, within: 30s }
+  late-requests:
+    faults:
+      - { edge: checkout -> payments, fault: latency, delay: 1500ms, direction: request, after: 20s, for: 30s }
+  lost-answers:
+    faults:
+      - { edge: checkout -> payments, fault: reset, rate: 5%, direction: response, after: 20s, for: 30s }
+  fraud-split:
+    faults:
+      - { edge: payments -> fraud, fault: partition, after: 20s, for: 10s }
 
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1

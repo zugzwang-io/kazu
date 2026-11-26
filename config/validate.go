@@ -77,7 +77,11 @@ func (v *validator) scenario(s Scenario, taken map[string]bool) {
 	for i := range s.Faults {
 		v.fault(append(slices.Clone(path), "faults", strconv.Itoa(i)), &s.Faults[i])
 	}
-	v.anchors(path, s.Faults)
+	before := len(v.ps.list)
+	byName := v.anchors(path, s.Faults)
+	if len(v.ps.list) == before {
+		v.overlaps(path, s.Faults, byName)
+	}
 	v.checks(append(slices.Clone(path), "checks"), s.Checks, taken)
 }
 
@@ -144,8 +148,9 @@ func (v *validator) fault(path []string, ft *Fault) {
 }
 
 // anchors checks what each fault's from names: a fault in the same
-// scenario, not itself, with an end if its end is used, and no loops.
-func (v *validator) anchors(path []string, faults []Fault) {
+// scenario, not itself, with an end if its end is used, and no loops. It
+// returns each named fault's index.
+func (v *validator) anchors(path []string, faults []Fault) map[string]int {
 	at := func(i int, keys ...string) []string {
 		return append(append(slices.Clone(path), "faults", strconv.Itoa(i)), keys...)
 	}
@@ -197,6 +202,7 @@ func (v *validator) anchors(path []string, faults []Fault) {
 		chain = append(chain, chain[0])
 		v.ps.add(at(loop[0], "from"), "faults count from each other in a loop: "+strings.Join(chain, " -> "))
 	}
+	return byName
 }
 
 // loops returns the cycles a depth-first walk of next finds (at least one

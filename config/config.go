@@ -9,8 +9,9 @@ import (
 // slices in file order, so anything derived from a config is deterministic
 // (Service.Environment and ServiceEnv.Vars stay maps; sort their keys).
 //
-// The loader fills every documented default (HTTPRequest.Method) so a zero
-// or empty value after loading is one the user wrote, never one they left out.
+// The loader fills every documented default (HTTPRequest.Method,
+// Fault.Direction) so a zero or empty value after loading is one the user
+// wrote, never one they left out.
 //
 // Config mirrors kazu.schema.json, which publishes where each key's shape
 // is headed, so it can hold more than the running build acts on.
@@ -121,11 +122,10 @@ type FaultKind string
 const (
 	Latency   FaultKind = "latency"
 	Down      FaultKind = "down"
-	Blackhole FaultKind = "blackhole"
+	Partition FaultKind = "partition"
 	Reset     FaultKind = "reset"
 	Bandwidth FaultKind = "bandwidth"
 	Errors    FaultKind = "errors"
-	Timeout   FaultKind = "timeout"
 	Crash     FaultKind = "crash"
 	Pause     FaultKind = "pause"
 	CPU       FaultKind = "cpu"
@@ -151,9 +151,9 @@ const (
 // kinds above, so any other value is a programming error.
 func (k FaultKind) Layer() Layer {
 	switch k {
-	case Latency, Down, Blackhole, Reset, Bandwidth:
+	case Latency, Down, Partition, Reset, Bandwidth:
 		return Network
-	case Errors, Timeout:
+	case Errors:
 		return Request
 	case Crash, Pause, CPU, Memory, DiskFull:
 		return Process
@@ -172,8 +172,11 @@ type Fault struct {
 	Service string
 	Kind    FaultKind
 
+	// Direction is set for latency, reset and bandwidth, and empty for
+	// every other kind.
+	Direction     Direction
 	Delay, Jitter time.Duration // latency
-	Rate          Percent       // reset, errors, timeout
+	Rate          Percent       // reset, errors
 	Code          string        // errors: an HTTP status ("503") or a gRPC code name ("UNAVAILABLE")
 	Limit         BitRate       // bandwidth
 	Load          Percent       // cpu, memory
@@ -190,6 +193,17 @@ type Fault struct {
 	// For is how long the fault lasts; zero means until traffic ends.
 	For time.Duration
 }
+
+// Direction is which bytes of an edge a network fault acts on: those the
+// caller sends (request), those the callee sends back (response), or both.
+// On a service target it applies to every declared inbound edge.
+type Direction string
+
+const (
+	RequestDirection  Direction = "request"
+	ResponseDirection Direction = "response"
+	BothDirections    Direction = "both"
+)
 
 // Anchor is a point in another fault's planned window: its end, or its
 // start when Start is set.

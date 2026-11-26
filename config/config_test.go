@@ -55,13 +55,13 @@ func TestReference(t *testing.T) {
 	for _, s := range cfg.Scenarios {
 		names = append(names, s.Name)
 	}
-	wantNames := []string{"slow-payments", "db-blip", "payments-dies-midflight", "double-click", "browse-under-outage", "soak", "rare-errors", "cascading"}
+	wantNames := []string{"slow-payments", "db-blip", "payments-dies-midflight", "double-click", "browse-under-outage", "soak", "rare-errors", "cascading", "late-requests", "lost-answers", "fraud-split"}
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Errorf("scenarios in file order = %q", names)
 	}
 
 	slow, _ := cfg.Scenario("slow-payments")
-	wantSlow := config.Fault{Edge: "checkout -> payments", Kind: config.Latency, Delay: 300 * time.Millisecond, Jitter: 50 * time.Millisecond, After: 20 * time.Second}
+	wantSlow := config.Fault{Edge: "checkout -> payments", Kind: config.Latency, Direction: config.ResponseDirection, Delay: 300 * time.Millisecond, Jitter: 50 * time.Millisecond, After: 20 * time.Second}
 	if !reflect.DeepEqual(slow.Faults, []config.Fault{wantSlow}) {
 		t.Errorf("slow-payments faults = %+v", slow.Faults)
 	}
@@ -111,6 +111,19 @@ func TestReference(t *testing.T) {
 	}
 	if c := cascading.Checks; len(c) != 1 || c[0].Name != "recovers-7" || c[0].Recovers.Service != "checkout" {
 		t.Errorf("cascading checks = %+v, want recovers-7, numbered after the 6 top-level checks", c)
+	}
+
+	late, _ := cfg.Scenario("late-requests")
+	if f := late.Faults[0]; f.Kind != config.Latency || f.Direction != config.RequestDirection {
+		t.Errorf("late-requests fault = %+v", f)
+	}
+	lost, _ := cfg.Scenario("lost-answers")
+	if f := lost.Faults[0]; f.Kind != config.Reset || f.Direction != config.ResponseDirection || f.Rate != 5 {
+		t.Errorf("lost-answers fault = %+v", f)
+	}
+	split, _ := cfg.Scenario("fraud-split")
+	if f := split.Faults[0]; f.Kind != config.Partition || f.Direction != "" || f.For != 10*time.Second {
+		t.Errorf("fraud-split fault = %+v", f)
 	}
 
 	var checks []string
@@ -224,6 +237,34 @@ func TestFormats(t *testing.T) {
 	cfg := parse(t, "checks: [ { no_regression: { service: payments, measure: p99, within: 150% } } ]\n")
 	if w := cfg.Checks[0].NoRegression.Within; w != 150 {
 		t.Errorf("within 150%% = %v", w)
+	}
+}
+
+// Kinds that take a direction get the written one or their default; every
+// other kind has none.
+func TestFaultDirection(t *testing.T) {
+	tests := []struct {
+		fields string
+		want   config.Direction
+	}{
+		{"edge: checkout -> payments, fault: latency, delay: 1s", config.ResponseDirection},
+		{"edge: checkout -> payments, fault: latency, delay: 1s, direction: request", config.RequestDirection},
+		{"edge: checkout -> payments, fault: latency, delay: 1s, direction: response", config.ResponseDirection},
+		{"edge: checkout -> payments, fault: reset, rate: 5%", config.RequestDirection},
+		{"edge: checkout -> payments, fault: reset, rate: 5%, direction: response", config.ResponseDirection},
+		{"service: payments, fault: reset, rate: 5%, direction: request", config.RequestDirection},
+		{"edge: checkout -> payments, fault: bandwidth, limit: 64kbps", config.BothDirections},
+		{"edge: checkout -> payments, fault: bandwidth, limit: 64kbps, direction: request", config.RequestDirection},
+		{"edge: checkout -> payments, fault: bandwidth, limit: 64kbps, direction: response", config.ResponseDirection},
+		{"edge: checkout -> payments, fault: partition", ""},
+		{"edge: checkout -> payments, fault: down", ""},
+		{"edge: checkout -> payments, fault: errors, rate: 5%, code: 503", ""},
+		{"service: payments, fault: pause", ""},
+	}
+	for _, tt := range tests {
+		if got := firstFault(t, tt.fields).Direction; got != tt.want {
+			t.Errorf("%s: direction %q, want %q", tt.fields, got, tt.want)
+		}
 	}
 }
 
