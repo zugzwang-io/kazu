@@ -302,7 +302,7 @@ Plus whatever the scenario's `env:` sets for `traffic`.
   soak:
     traffic: { command: [run, /load/soak.js] }
     faults:
-      - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 500, for: 5s }
   ```
 
 ### 4.4 `kazu.yaml` reference
@@ -349,7 +349,7 @@ scenarios:
       - { edge: checkout -> payments, fault: down, from: { start: slow-pay }, after: 10s, for: 5s } # overlaps it
   payments-dies-midflight:
     faults:
-      - { service: payments, fault: crash, after_requests: 200, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 200, for: 5s }
   double-click:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }   # env vars per service, passed through untouched
     checks:
@@ -370,7 +370,7 @@ scenarios:
     traffic: { command: [run, /load/soak.js] }  # merged over the default traffic definition
     env: { traffic: { DURATION: 180s } }        # the script decides how long it runs
     faults:
-      - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 500, for: 5s }
   rare-errors:
     not_exercised: warn               # a 1% fault may not fire on light traffic
     faults:
@@ -438,26 +438,29 @@ A scenario's `faults:` is a list. Each fault is a map:
 
 | `fault` | Layer | Target | Fields | Example |
 |---|---|---|---|---|
-| `latency` | network | edge or service | `delay`, `jitter` | `{ fault: latency, delay: 300ms, jitter: 50ms }` |
+| `latency` | network | edge or service | `delay`, `jitter`, `direction` (`request` or `response`; default `response`) | `{ fault: latency, delay: 300ms, jitter: 50ms }` |
 | `down` | network (refuse new connections and cut existing ones) | edge or service | — | `{ fault: down, after: 30s, for: 15s }` |
-| `blackhole` | network (accept, never answer) | edge or service | — | `{ fault: blackhole, for: 20s }` |
-| `reset` | network | edge or service | `rate` | `{ fault: reset, rate: 2% }` |
-| `bandwidth` | network | edge or service | `limit` | `{ fault: bandwidth, limit: 64kbps }` |
+| `partition` | network (hold both ways, deliver on heal) | edge or service | — | `{ fault: partition, for: 20s }` |
+| `reset` | network | edge or service | `rate`, `direction` (`request` or `response`; default `request`) | `{ fault: reset, rate: 2% }` |
+| `bandwidth` | network | edge or service | `limit`, `direction` (`request`, `response` or `both`; default `both`, each direction with its own `limit`) | `{ fault: bandwidth, limit: 64kbps }` |
 | `errors` | HTTP/gRPC | http/grpc edge | `rate`, `code` | `{ fault: errors, rate: 10%, code: 503 }` |
-| `timeout` | HTTP/gRPC | http/grpc edge | `rate` | `{ fault: timeout, rate: 5%, after: 1m }` |
-| `crash` | process | service | `restart_after` | `{ fault: crash, after_requests: 200, restart_after: 5s }` |
+| `crash` | process | service | — (`for` is how long it stays down before Kazu restarts it; without `for`, until traffic exits) | `{ fault: crash, after_requests: 200, for: 5s }` |
 | `pause` | process | service | — | `{ fault: pause, for: 10s }` |
 | `cpu`, `memory` | resource | service | `load` | `{ fault: cpu, load: 90% }` |
 | `disk_full` | resource | service | — | `{ fault: disk_full, after: 30s }` |
 
 - `edge: a -> b` means one declared edge. `service: b` means **every declared inbound edge** (network faults) or the process (process and resource faults). Callers whose edges aren't declared are untouched; `kazu doctor` lists them.
 - `after` counts from traffic start; `after_requests` counts requests through the proxy.
-- **Relative triggers** ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)). `from:` makes `after` count from another fault in the same scenario: its name for its end, `{ start: name }` for its start, or a list for the latest of several (a join). Without `from`, faults are independent and overlap by their windows. Anchors are *planned* times: every wall-clock fault's start and end resolve when the plan is built, so base and head get the same schedule; an anchor on a request-count fault resolves at run time, through the controller (ADR-0006). Using a fault's end needs that fault to have a `for` (a crash has none); loops are rejected. There are no triggers on system events ("once payments is healthy"): the schedule would then depend on the system, so base and head could get different timelines.
-- `down` must cut live connections, or pooled connections ride through the outage and the scenario tests nothing.
+- **Relative triggers** ([ADR-0004](docs/adr/0004-relative-fault-triggers.md)). `from:` makes `after` count from another fault in the same scenario: its name for its end, `{ start: name }` for its start, or a list for the latest of several (a join). Without `from`, faults are independent and overlap by their windows. Anchors are *planned* times: every wall-clock fault's start and end resolve when the plan is built, so base and head get the same schedule; an anchor on a request-count fault resolves at run time, through the controller (ADR-0006). Using a fault's end needs that fault to have a `for`; loops are rejected. There are no triggers on system events ("once payments is healthy"): the schedule would then depend on the system, so base and head could get different timelines.
+- **`direction`** ([ADR-0008](docs/adr/0008-network-faults-have-a-direction.md)). `request` is the bytes the caller sends toward the callee, following the edge's `a -> b` arrow; `response` is the bytes the callee sends back. The names follow HTTP's meaning and work the same on a `tcp` edge; on a `service: b` target, `direction` applies to every declared inbound edge of `b`. `latency` adds `delay` once per call, in the one chosen direction: each chunk is due at the later of its read time plus `delay` plus jitter and the previous chunk's due time, so chunks never reorder and a multi-chunk answer is late by about `delay`. The default `response` means the callee acts on time and the answer is late; `request` delivers the request late, so the callee may act after the caller has given up (the caller's FIN follows the delayed bytes, and a server that cancels work when its client disconnects may cancel that request). There is no `both` on `latency` (slowing both streams is `bandwidth`) or on `reset` (it would differ from `request` only on a connection that already had a request in flight when the fault started). The schema rejects `direction` on `partition` (both ways by definition; a one-way hold is `latency` with a long delay), `down` (a state of the connection, and refused has to keep meaning "definitely not processed"), `errors` (never forwards anything) and the process and resource faults (no stream). Response loss has exactly two forms: silent (`latency` past the caller's timeout) and with an error (`reset` with `direction: response`).
+- **A network fault applies to live connections from the moment it starts**, or a pooled keep-alive connection rides through it and the scenario tests nothing. `down` refuses new connections and resets live ones.
+- **`partition` stops reading, in both directions**, and builds no queue of its own. On a live connection it holds the chunk its copy loop was already reading, if any, plus whatever later stages already had (chunks waiting out a `latency` delay, writes queued by `bandwidth`, an `errors` answer not yet written), then stops reading, which leaves the rest in the operating system's TCP buffers: a small amount waits there, a large amount fills them and the sender's writes block, as they do while TCP retransmits across a real split. A connection accepted during the window reads nothing and the callee isn't dialled until the window ends. On heal the proxy forwards what it held and reads again, so everything is delivered late and nothing is lost, which is how a real partition behaves for any split shorter than TCP's give-up time. A caller that gave up during the window still has its request delivered on heal, followed by its FIN, so several same-key retries sent during a partition arrive together: a direct test of the callee's deduplication. Two known differences from a real split: delivery is immediate on heal rather than on TCP's next retransmit, and a new connection completes its handshake before hanging, because connect-time faults need a packet-filter rule in the proxy's network namespace (backlog).
+- **Overlapping faults on one edge** compose through one pipeline per direction: `down` → `partition` (read gate) → `reset` → `errors` → `latency` → `bandwidth` → `partition` (write gate) → write. `down` gates the connection itself, and anything a partition held goes with it. The partition's write gate holds everything the proxy would otherwise write in that direction, bytes already inside `latency` or `bandwidth` and the proxy's own `errors` answers included: nothing crosses a partition. `reset` comes before `errors`, so a request drawn by both is cut, not answered (`ECONNRESET`, so the shop leaves the order `pending`); a `response` reset cuts before anything in the response direction is written, the proxy's own answers included. `errors` answers a drawn request itself and never forwards it; its answer enters the response direction at the `latency` stage, so `latency` (`response`) plus `errors` gives a slow error, which is how a struggling dependency usually fails. A per-scenario override of the stage order is in the post-v1 backlog.
+- **Two faults of the same kind on the same target are rejected when the config loads, unless they provably can't overlap.** For network and HTTP/gRPC faults the target is an edge (`service: b` counts as each of `b`'s inbound edges), the same kind in different directions included (or `bandwidth` with `request` plus `bandwidth` with `response` would be a second way to write `both`); for process and resource faults (`crash`, `pause`, `cpu`, `memory`, `disk_full`) it is the service. Two latencies or two error rates have no single obvious meaning, so the user picks one or sequences them. Two faults whose windows both resolve to planned wall-clock times are compared as half-open intervals; a fault with no `for` runs until traffic exits. A fault that depends on a request count, directly or through `from:`, is treated as running forever, so it overlaps, unless one fault is sequenced after the other's end through `from:` (chains and joins count; a link through `{ start: X }` counts only if X is itself sequenced after the first fault's end). A `crash` with `for` is down for that long, then restarted; its window covers Kazu's own action, not the service's recovery.
 - `crash` kills the container in place and lets it restart in the same container (compose) or the same pod (Kubernetes). Deleting a pod would change IPs and filesystems and make base and head behave differently.
 - Request-count triggers land at the same point in every run; wall-clock triggers drift more.
 - **Request-count triggers need an `http` or `grpc` edge to count on.** On a `tcp` edge the proxy sees only bytes, so there are no requests to count; `after_requests` there is rejected when the config is loaded. On a `service` target it counts requests on the service's declared HTTP/gRPC inbound edges, and is rejected if it has none.
-- Probabilities use a PRNG seeded from `(run seed, edge, request number)`.
+- Probabilities use a PRNG seeded from `(run seed, edge, request number)`; `reset` draws per request on `http` and `grpc` edges and cuts a drawn request's connection before it is forwarded (`request`) or when the callee starts answering it (`response`), whatever the client's pooling. The one exception is `reset` on a `tcp` edge, where there are no requests: it draws each connection once from `(run seed, edge, connection number)` and cuts it on its next chunk in the selected direction. Connection numbers follow accept order, which depends on the client's pooling, so that draw is deterministic only while base and head open connections the same way.
 - HTTP/gRPC faults on a TLS edge require a stub or a test CA. `kazu doctor` reports this per edge.
   **Fault layer priority** (application teams first): network proxy → HTTP/gRPC proxy → process/resource → in-code SDK fault points → kernel-level (partitions via netem) last.
 
@@ -491,7 +494,7 @@ Modelled on Antithesis's default properties, which check setup and correctness w
 #### Auto scenarios
 
 With `auto_scenarios: true`, Kazu generates scenarios as well as checks:
-- `auto-crash-<service>` for every service (except one-shot jobs and traffic): `{ fault: crash, after: 20s, restart_after: 5s }`;
+- `auto-crash-<service>` for every service (except one-shot jobs and traffic): `{ fault: crash, after: 20s, for: 5s }`;
 - `auto-down-<caller>-<callee>` for every declared edge (except edges from traffic): `{ fault: down, after: 20s, for: 15s }`.
   They can be listed in suites by name, and `auto` in a suite means all of them.
 
@@ -748,8 +751,11 @@ Servers that hand out their own addresses after the first connection (Kafka brok
 **The landed check.** Each proxy counts traffic and applied faults. After every trial, each configured fault must have applied at least once; otherwise the scenario's result is **not exercised**, with the reason:
 - no traffic reached the proxy (the caller uses an IP or bypasses the system resolver);
 - the trigger was never reached (`crash after 200 requests` with 150 sent);
-- a request-level fault on traffic the proxy can't parse as HTTP/gRPC.
+- a request-level fault on traffic the proxy can't parse as HTTP/gRPC;
+- the fault found nothing to change (a `response` reset against a callee that never answers, a 5% `reset` that drew nothing).
   By default, not exercised fails the scenario, because passing would be a lie. It is a fact, not a heuristic, and it can be downgraded to a warning globally (`gate.not_exercised: warn`) or per scenario, for cases like a 1% fault on light traffic.
+
+**Applied counts an effect, not an attempt.** The counters are per fault and per direction, and a fault is applied only when it changed what a side saw; forwarding a request or accepting a connection never counts. `latency`: a chunk in its direction was held for the delay. `partition`: it held at least one byte (on `grpc` and HTTP/2 edges only HEADERS and DATA frames count; pings, SETTINGS and WINDOW_UPDATE frames don't). `reset`: a drawn request's connection (on `tcp` edges, a drawn connection) was cut, and under `response` the callee had started answering. `bandwidth`: the limiter made at least one write in a selected direction wait. `down`: it refused a connection or reset a live one. `errors`: it answered a request with the configured error. For a `requests:` condition (§4.6), a request the proxy held or cut still counts as received.
 
 *Not exercised* also comes from a check whose `requires:` was never met (§4.6).
 
@@ -777,6 +783,9 @@ Deliberate deviations:
 | The exit check exempts Kazu's own kills and one-shot jobs rather than exit codes, so OOM kills (137), crash loops and every other non-zero exit count; Antithesis exempts 0, 137 and 143 | Kazu records its own process faults (§6.1), so it needn't exempt by code; exempting 137 would hide out-of-memory kills |
 | A check without `requires:` stays eligible when never reached (a `sql:` check passes on no rows); Antithesis's `Always` fails if it is never reached | Kazu checks from outside, so it can't see that a check was reached: a violation-selecting query returns no rows both for "no violations" and for "nothing happened". Only the user knows what has to happen first, and states it with `requires:` (§4.6) |
 | Reachability is a precondition attached to the check it guards (`requires:`), not a standalone `Sometimes` assertion; Antithesis has no counterpart to `requires:` | Which assertion a `Sometimes` vouches for is implicit, left for the reader to work out; the condition on the check it applies to makes it explicit |
+| `delay` is added once per call, in one direction; Antithesis's Slowed delays packets, so a round trip pays it in each direction | `delay` then means the time added to a call, which is what users mean by "payments is slow" (§4.5) |
+| Overlapping faults compose through a fixed pipeline per direction; Antithesis lets the more aggressive fault win for the overlap | The pipeline is defined for every pair, and gives slow errors (§4.5) |
+| Two faults of the same kind can't overlap on one target (an edge, or a service for process and resource faults); Antithesis lets network faults overlap on a link and silently skips a second node fault on a container | Two latencies or two error rates have no single obvious meaning, so the user picks one or sequences them (§4.5) |
 
 ### 6.8 Telemetry
 
@@ -879,7 +888,6 @@ Keeping it fast and reliable:
 - Whether hosted CI runners can run K3s inside Docker (spike before step 4).
 - OTLP → Prometheus name mapping details (units, dots, delta vs cumulative counters). Deferred to step 4.
 - Generic improvements suggested by the shop's predicted misses: realistic client timeouts in the k6 template or as a default scenario (abandoned requests); memory growth relative to base as a default check, or memory limits on sealed systems; a small share of malformed requests in the template (poison messages).
-- What happens when two faults overlap on one target; §4.4's `cascading` scenario already overlaps a `latency` and a `down` on `checkout -> payments`. Antithesis's rule: network faults may overlap on a link, the more aggressive one winning for the overlap and the other resuming if its window hasn't expired; only one node fault is active on a container at a time, and a later one is skipped without being logged.
 ---
 
 ## 11. Decision log
