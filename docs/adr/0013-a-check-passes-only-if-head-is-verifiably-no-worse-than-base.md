@@ -1,7 +1,7 @@
 # ADR-0013: A check passes only if head is verifiably no worse than base; a scenario passes only if it ran and every check passed
 
 Date: 2026-11-27
-Status: Proposed
+Status: Accepted (2026-11-27)
 
 Amends ADR-0011 (parts of rules 5 and 7; see Consequences).
 
