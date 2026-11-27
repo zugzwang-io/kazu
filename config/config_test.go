@@ -78,6 +78,22 @@ func TestReference(t *testing.T) {
 	if len(double.Faults) != 0 || !reflect.DeepEqual(double.Env, []config.ServiceEnv{{Service: "traffic", Vars: map[string]string{"DOUBLE_SUBMIT": "1"}}}) {
 		t.Errorf("double-click = %+v", double)
 	}
+	if len(double.Checks) != 2 {
+		t.Fatalf("double-click checks = %+v", double.Checks)
+	}
+	charged := double.Checks[0]
+	wantCharged := []config.Requirement{
+		{Kind: config.SQLRequirement, SQL: &config.SQL{On: "postgres", Query: "select 1 from charges limit 1"}},
+		{Kind: config.RequestsRequirement, Requests: &config.Requests{Edge: "checkout -> payments", Min: 50}},
+	}
+	if charged.Name != "charged_once" || charged.SQL == nil || !strings.HasPrefix(charged.SQL.Query, "select order_id") || !reflect.DeepEqual(charged.Requires, wantCharged) {
+		t.Errorf("charged_once = %+v, requires %+v", charged, charged.Requires)
+	}
+	p99 := double.Checks[1]
+	wantP99 := []config.Requirement{{Kind: config.RequestsRequirement, Requests: &config.Requests{Service: "payments", Min: 200}}}
+	if p99.Name != "payments_p99" || *p99.NoRegression != (config.NoRegression{Service: "payments", Measure: config.P99, Within: 10}) || !reflect.DeepEqual(p99.Requires, wantP99) {
+		t.Errorf("payments_p99 = %+v, requires %+v", p99, p99.Requires)
+	}
 	browse, _ := cfg.Scenario("browse-under-outage")
 	wantEnv := []config.ServiceEnv{{Service: "traffic", Vars: map[string]string{"FLOW": "browse", "RATE": "50"}}}
 	if !reflect.DeepEqual(browse.Env, wantEnv) {
@@ -109,8 +125,8 @@ func TestReference(t *testing.T) {
 	if !reflect.DeepEqual(from, wantFrom) || cascading.Faults[0].Name != "slow-pay" || cascading.Faults[2].Name != "" {
 		t.Errorf("cascading anchors = %+v", cascading.Faults)
 	}
-	if c := cascading.Checks; len(c) != 1 || c[0].Name != "recovers-7" || c[0].Recovers.Service != "checkout" {
-		t.Errorf("cascading checks = %+v, want recovers-7, numbered after the 6 top-level checks", c)
+	if c := cascading.Checks; len(c) != 1 || c[0].Name != "recovers-5" || c[0].Recovers.Service != "checkout" || c[0].NotExercised != config.Warn || c[0].Requires != nil {
+		t.Errorf("cascading checks = %+v, want recovers-5, numbered after the 4 top-level checks, at warn", c)
 	}
 
 	late, _ := cfg.Scenario("late-requests")
@@ -130,7 +146,7 @@ func TestReference(t *testing.T) {
 	for _, c := range cfg.Checks {
 		checks = append(checks, c.Name)
 	}
-	wantChecks := []string{"image-1", "sql-2", "recovers-3", "no_regression-4", "slo-5", "metric-6"}
+	wantChecks := []string{"image-1", "recovers-2", "slo-3", "metric-4"}
 	if !reflect.DeepEqual(checks, wantChecks) {
 		t.Errorf("check names = %q", checks)
 	}
@@ -138,19 +154,13 @@ func TestReference(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Checks[0].Image, wantImage) {
 		t.Errorf("image check = %+v", cfg.Checks[0].Image)
 	}
-	if sql := cfg.Checks[1].SQL; sql.On != "postgres" || !strings.HasPrefix(sql.Query, "select order_id") {
-		t.Errorf("sql = %+v", sql)
-	}
-	if r := cfg.Checks[2].Recovers; *r != (config.Recovers{Service: "payments", Within: 30 * time.Second}) {
+	if r := cfg.Checks[1].Recovers; *r != (config.Recovers{Service: "payments", Within: 30 * time.Second}) {
 		t.Errorf("recovers = %+v", r)
 	}
-	if nr := cfg.Checks[3].NoRegression; *nr != (config.NoRegression{Service: "payments", Measure: config.P99, Within: 10}) {
-		t.Errorf("no_regression = %+v", nr)
-	}
-	if slo := cfg.Checks[4].SLO; slo.Measure != config.ErrorRate || slo.MaxRate != 1 || slo.MaxLatency != 0 {
+	if slo := cfg.Checks[2].SLO; slo.Measure != config.ErrorRate || slo.MaxRate != 1 || slo.MaxLatency != 0 {
 		t.Errorf("slo = %+v", slo)
 	}
-	if m := cfg.Checks[5].Metric; m.Within == nil || *m.Within != 50 || m.Max != nil {
+	if m := cfg.Checks[3].Metric; m.Within == nil || *m.Within != 50 || m.Max != nil {
 		t.Errorf("metric = %+v", m)
 	}
 
@@ -275,6 +285,7 @@ func TestRejectsLossyNumbers(t *testing.T) {
 		{"float as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 200.0 } ] } }\n", "expected a whole number, got 200.0"},
 		{"exponent as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 2e2 } ] } }\n", "expected a whole number, got 2e2"},
 		{"oversized request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 99999999999999999999 } ] } }\n", "expected a whole number"},
+		{"float as a required request count", "checks: [ { image: x, requires: [ { requests: { service: payments, min: 50.0 } } ] } ]\n", "expected a whole number, got 50.0"},
 		{"float status", "checks: [ { http: { on: postgres, path: /x, expect: { status: 200.0 } } } ]\n", "expected a whole number, got 200.0"},
 		{"duration overflow", "scenarios: { a: { faults: [ { service: payments, fault: down, after: 9999999999999h } ] } }\n", "is not a duration Kazu can hold"},
 		{"percent overflow", "checks: [ { no_regression: { service: payments, measure: p99, within: 1" + strings.Repeat("0", 400) + "% } } ]\n", "is too large a number"},
@@ -376,6 +387,42 @@ scenarios:
 	}
 	if cfg.Scenarios[1].Checks != nil {
 		t.Errorf("scenario without checks = %+v", cfg.Scenarios[1].Checks)
+	}
+}
+
+// requires and not_exercised decode on any check kind, in file order, with
+// edge names canonical.
+func TestRequiresAndNotExercised(t *testing.T) {
+	cfg := parse(t, `checks:
+  - image: x
+    requires: [ { requests: { edge: checkout->payments, min: 0x10 } } ]
+    not_exercised: warn
+  - sql: { on: postgres, query: select 2 }
+    requires:
+      - requests: { service: payments, min: 1 }
+      - sql: { on: postgres, query: select 1 }
+    not_exercised: fail
+  - sql: { on: postgres, query: select 3 }
+`)
+	want := []struct {
+		requires     []config.Requirement
+		notExercised config.Severity
+	}{
+		{[]config.Requirement{{Kind: config.RequestsRequirement, Requests: &config.Requests{Edge: "checkout -> payments", Min: 16}}}, config.Warn},
+		{[]config.Requirement{
+			{Kind: config.RequestsRequirement, Requests: &config.Requests{Service: "payments", Min: 1}},
+			{Kind: config.SQLRequirement, SQL: &config.SQL{On: "postgres", Query: "select 1"}},
+		}, config.Fail},
+		{nil, ""},
+	}
+	for i, w := range want {
+		c := cfg.Checks[i]
+		if !reflect.DeepEqual(c.Requires, w.requires) || c.NotExercised != w.notExercised {
+			t.Errorf("checks[%d] requires %+v, not_exercised %q; want %+v, %q", i, c.Requires, c.NotExercised, w.requires, w.notExercised)
+		}
+	}
+	if img := cfg.Checks[0].Image; img == nil || img.Image != "x" {
+		t.Errorf("image check with requires = %+v", img)
 	}
 }
 

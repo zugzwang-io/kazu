@@ -103,8 +103,10 @@ type Scenario struct {
 	// Config.Traffic (a non-empty Image, a non-nil Command or non-nil
 	// Volumes replace, Environment is merged).
 	Traffic *Service
-	// NotExercised is the scenario's severity for a fault that never
-	// landed; empty means not set.
+	// NotExercised is the scenario's severity for any not-exercised result
+	// in it: a fault that never landed, a check whose Requires never held,
+	// or a recovers window cut short by the end of traffic. A check's own
+	// NotExercised wins over it; empty means not set.
 	NotExercised Severity
 	// Checks run in this scenario only, after the top-level checks.
 	Checks []Check
@@ -244,6 +246,13 @@ type Check struct {
 	// checks, then the scenario's own.
 	Name string
 	Kind CheckKind
+	// Requires must all hold in a trial for the check to count there; a
+	// check that is eligible in no trial, on base or head, is not
+	// exercised. Nil means always eligible.
+	Requires []Requirement
+	// NotExercised is the check's severity when it is not exercised, over
+	// its scenario's; empty means not set.
+	NotExercised Severity
 
 	Image        *Service
 	SQL          *SQL
@@ -254,10 +263,38 @@ type Check struct {
 	Metric       *Metric
 }
 
-// SQL runs Query on a connection after traffic exits and passes when it
-// returns no rows: the query selects violations.
+// SQL is a query on a postgres connection. As a check it runs after traffic
+// exits and passes when it returns no rows: the query selects violations. As
+// a requirement it holds when it returns at least one row.
 type SQL struct {
 	On, Query string
+}
+
+// RequirementKind is the kind of a check's requirement.
+type RequirementKind string
+
+const (
+	SQLRequirement      RequirementKind = "sql"
+	RequestsRequirement RequirementKind = "requests"
+)
+
+// Requirement is one condition in a check's requires list. The field
+// matching Kind is set.
+type Requirement struct {
+	Kind     RequirementKind
+	SQL      *SQL
+	Requests *Requests
+}
+
+// Requests holds when the proxy received at least Min requests between
+// traffic start and traffic exit, counted per trial. Exactly one of Edge
+// (one http or grpc edge) and Service (the sum over its http and grpc
+// inbound edges) is set.
+type Requests struct {
+	// Edge is a declared edge's canonical name, "caller -> callee".
+	Edge    string
+	Service string
+	Min     int
 }
 
 // HTTPRequest sends one request to a connection after traffic exits. Method

@@ -31,6 +31,16 @@ scenarios:
       - { service: payments, fault: crash, after_requests: 200, for: 5s }
   double-click:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }
+    checks:
+      - name: charged_once
+        sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }
+        requires:
+          - sql: { on: postgres, query: "select 1 from charges limit 1" }
+          - requests: { edge: checkout -> payments, min: 50 }
+      - name: payments_p99
+        no_regression: { service: payments, measure: p99, within: 10% }
+        requires:
+          - requests: { service: payments, min: 200 }
   browse-under-outage:
     env: { traffic: { FLOW: browse, RATE: "50" } }
     faults:
@@ -51,7 +61,7 @@ scenarios:
       - { edge: checkout -> payments, fault: down, from: { start: slow-pay }, after: 10s, for: 5s }
       - { edge: traffic -> checkout, fault: latency, delay: 50ms, from: [db-down, { start: slow-pay }], after: 5s }
     checks:
-      - recovers: { service: checkout, within: 30s }
+      - { recovers: { service: checkout, within: 30s }, not_exercised: warn }
   late-requests:
     faults:
       - { edge: checkout -> payments, fault: latency, delay: 1500ms, direction: request, after: 20s, for: 30s }
@@ -65,9 +75,7 @@ scenarios:
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1
     volumes: [./checks:/checks:ro]
-  - sql: { on: postgres, query: "select order_id from charges group by order_id having count(*) > 1" }
   - recovers: { service: payments, within: 30s }
-  - no_regression: { service: payments, measure: p99, within: 10% }
   - slo: { service: checkout, measure: error_rate, max: 1% }
   - metric:
       query: histogram_quantile(0.99, sum by (le) (rate(db_pool_acquire_seconds_bucket[5m])))

@@ -506,6 +506,45 @@ checks:
 	}
 }
 
+// What a check's requires reads must exist and be countable.
+func TestRequiresRules(t *testing.T) {
+	_, err := config.Parse("kazu.yaml", []byte(`system: docker-compose.yml
+traffic: { image: grafana/k6:1.0.0 }
+edges:
+  traffic -> checkout: http
+  checkout -> payments: http
+  checkout -> postgres: tcp
+connections:
+  postgres: postgres://postgres:dev@postgres/shop
+  api: http://checkout:8080
+checks:
+  - image: x
+    requires:
+      - sql: { on: pg, query: select 1 }
+      - sql: { on: api, query: select 1 }
+      - requests: { edge: checkout -> paymnts, min: 1 }
+      - requests: { edge: checkout -> postgres, min: 1 }
+      - requests: { service: postgres, min: 1 }
+      - requests: { service: fraud, min: 1 }
+scenarios:
+  s:
+    checks:
+      - { name: x, recovers: { service: checkout, within: 1s }, requires: [ { requests: { edge: traffic -> payments, min: 1 } } ] }
+`))
+	want := []string{
+		`kazu.yaml:13:20: checks[0].requires[0].sql.on: no connection named "pg"; declare it under connections (declared: postgres, api)`,
+		`kazu.yaml:14:20: checks[0].requires[1].sql.on: api is a http:// connection; this check needs a postgres:// one`,
+		`kazu.yaml:15:27: checks[0].requires[2].requests.edge: checkout -> paymnts is not a declared edge; requests are counted only on edges listed under edges (did you mean "checkout -> payments"?)`,
+		`kazu.yaml:16:27: checks[0].requires[3].requests.edge: checkout -> postgres is a tcp edge: its proxy sees bytes, not requests, so there are none to count. Count an http or grpc edge, or declare this one http or grpc if it carries those`,
+		`kazu.yaml:17:30: checks[0].requires[4].requests.service: postgres's declared inbound edges are all tcp, where the proxy sees bytes, not requests; this check needs an http or grpc edge into postgres`,
+		`kazu.yaml:18:30: checks[0].requires[5].requests.service: fraud has no declared inbound edges, so no proxy measures it; declare an http or grpc edge into fraud`,
+		`kazu.yaml:22:97: scenarios.s.checks[0].requires[0].requests.edge: traffic -> payments is not a declared edge; requests are counted only on edges listed under edges`,
+	}
+	if err == nil || err.Error() != strings.Join(want, "\n") {
+		t.Errorf("got:\n%v\nwant:\n%s", err, strings.Join(want, "\n"))
+	}
+}
+
 // mixed adds a grpc edge and a service with both tcp and http inbound edges.
 const mixed = `system: docker-compose.yml
 traffic: { image: grafana/k6:1.0.0 }
@@ -531,6 +570,7 @@ func TestRulesAccept(t *testing.T) {
 		{"anchors: a join, and the start of a fault without for", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: y, edge: worker -> payments, fault: down, for: 5s, from: { start: x } }\n      - { edge: payments -> fraud, fault: down, from: [y, { start: x }], after: 1s }\n"},
 		{"metric pinned to one value", "checks:\n  - metric: { query: up, min: 1, max: 1 }\n"},
 		{"zero tolerance", "checks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},
+		{"requires on http, grpc and user-facing edges, a mixed service, and postgres", "checks:\n  - image: x\n    requires:\n      - requests: { edge: checkout -> payments, min: 1 }\n      - requests: { edge: payments->fraud, min: 1 }\n      - requests: { edge: traffic -> checkout, min: 1 }\n      - requests: { service: payments, min: 1 }\n      - requests: { service: fraud, min: 1 }\n      - sql: { on: postgres, query: select 1 }\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

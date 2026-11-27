@@ -301,6 +301,9 @@ func (v *validator) checks(list []string, cs []Check, taken map[string]bool) map
 			v.ps.add(at("name"), fmt.Sprintf("another check is already named %q", c.Name))
 		}
 		names[c.Name] = true
+		for j, r := range c.Requires {
+			v.requirement(at("requires", strconv.Itoa(j)), r)
+		}
 
 		body := string(c.Kind)
 		switch c.Kind {
@@ -326,6 +329,30 @@ func (v *validator) checks(list []string, cs []Check, taken map[string]bool) map
 		}
 	}
 	return names
+}
+
+// requirement checks what one of a check's conditions reads: a postgres
+// connection for sql; for requests, an http or grpc edge, or a service with
+// one inbound, since a tcp proxy has no requests to count.
+func (v *validator) requirement(path []string, r Requirement) {
+	at := func(keys ...string) []string { return append(slices.Clone(path), keys...) }
+	switch r.Kind {
+	case SQLRequirement:
+		v.connection(at("sql", "on"), r.SQL.On, "postgres")
+	case RequestsRequirement:
+		rq := r.Requests
+		if rq.Service != "" {
+			v.measured(at("requests", "service"), rq.Service)
+			return
+		}
+		edge, ok := v.cfg.Edge(rq.Edge)
+		switch {
+		case !ok:
+			v.ps.add(at("requests", "edge"), fmt.Sprintf("%s is not a declared edge; requests are counted only on edges listed under edges", rq.Edge)+suggest(rq.Edge, v.edgeNames()))
+		case !edge.Protocol.RequestLevel():
+			v.ps.add(at("requests", "edge"), fmt.Sprintf("%s is a %s edge: its proxy sees bytes, not requests, so there are none to count. Count an http or grpc edge, or declare this one http or grpc if it carries those", rq.Edge, edge.Protocol))
+		}
+	}
 }
 
 // connection checks that a check's connection exists and has a URL scheme

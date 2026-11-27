@@ -111,6 +111,22 @@ func TestProblems(t *testing.T) {
 		{"slo latency as a percent", "checks:\n  - { slo: { service: checkout, measure: p99, max: 1% } }\n", []string{
 			`11:52: checks[0].slo.max: "1%" is not a duration such as 300ms, 20s or 1m30s`,
 		}},
+		{"empty requires", "checks:\n  - { image: x, requires: [] }\n", []string{
+			`11:27: checks[0].requires: must not be empty`,
+		}},
+		{"requirement with both kinds", "checks:\n  - image: x\n    requires:\n      - { sql: { on: postgres, query: x }, requests: { service: payments, min: 1 } }\n", []string{
+			`13:9: checks[0].requires[0]: has sql and requests; keep one`,
+		}},
+		{"requirement with neither kind", "checks:\n  - image: x\n    requires:\n      - { sqll: { on: postgres, query: x } }\n", []string{
+			`13:9: checks[0].requires[0]: needs one of sql or requests`,
+			`13:11: checks[0].requires[0].sqll: unknown key "sqll" (did you mean "sql"?)`,
+		}},
+		{"requests with edge and service", "checks:\n  - image: x\n    requires:\n      - requests: { edge: checkout -> payments, service: payments, min: 1 }\n", []string{
+			`13:19: checks[0].requires[0].requests: has edge and service; keep one`,
+		}},
+		{"requests with min 0", "checks:\n  - image: x\n    requires:\n      - requests: { service: payments, min: 0 }\n", []string{
+			`13:45: checks[0].requires[0].requests.min: must be at least 1`,
+		}},
 		{"empty suite", "suites:\n  pr: []\n", []string{
 			`11:7: suites.pr: must not be empty`,
 		}},

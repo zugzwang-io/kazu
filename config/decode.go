@@ -215,13 +215,21 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 	} else {
 		c.Name = fmt.Sprintf("%s-%d", c.Kind, i+1)
 	}
+	if v := f["requires"]; v != nil {
+		for _, rn := range v.Content {
+			c.Requires = append(c.Requires, d.requirement(rn))
+		}
+	}
+	if v := f["not_exercised"]; v != nil {
+		c.NotExercised = Severity(v.Value)
+	}
 	bf := fields(f[string(c.Kind)])
 	switch c.Kind {
 	case ImageCheck:
 		svc := service(n)
 		c.Image = &svc
 	case SQLCheck:
-		c.SQL = &SQL{On: bf["on"].Value, Query: bf["query"].Value}
+		c.SQL = sqlQuery(f[string(c.Kind)])
 	case HTTPCheck:
 		h := &HTTPRequest{On: bf["on"].Value, Method: "GET", Path: bf["path"].Value}
 		if m := bf["method"]; m != nil {
@@ -268,6 +276,29 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 	default:
 	}
 	return c
+}
+
+// requirement decodes one entry of a check's requires; the schema
+// guarantees exactly one kind key.
+func (d *decoder) requirement(n *yaml.Node) Requirement {
+	f := fields(n)
+	if v := f["sql"]; v != nil {
+		return Requirement{Kind: SQLRequirement, SQL: sqlQuery(v)}
+	}
+	rf := fields(f["requests"])
+	rq := &Requests{Min: d.integer(rf["min"])}
+	if v := rf["edge"]; v != nil {
+		rq.Edge = canonicalEdge(v.Value)
+	}
+	if v := rf["service"]; v != nil {
+		rq.Service = v.Value
+	}
+	return Requirement{Kind: RequestsRequirement, Requests: rq}
+}
+
+func sqlQuery(n *yaml.Node) *SQL {
+	f := fields(n)
+	return &SQL{On: f["on"].Value, Query: f["query"].Value}
 }
 
 // Scalar readers. Each records a problem at the node instead of returning a
