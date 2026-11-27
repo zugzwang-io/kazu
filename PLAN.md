@@ -99,6 +99,7 @@ Checks:
 
 Verdict and CLI:
 
+- [x] #66 ADR-0013 (Proposed): a check passes only if head is verifiably no worse than base (head passed every trial, base failed every trial, or a relative comparison within tolerance); a scenario passes only if it ran and every check passed; an unknown is resolved against head; applies from the one-pair verdict; underpowered fails by default, with a scenario `underpowered: warn` override; `flaky` and `gate.flaky` are removed; a scenario `blocking: false` waiver; amends ADR-0011's verdict rules and roll-up
 - [ ] verdict: per scenario, a check that passes on base and fails on head is REGRESSED, a violation on both is a pass; terminal output (§4.8 layout, pass/REGRESSED/not exercised only); `--json` result with per-edge proxy counters and a defined result for a config error (S2 and S3 assert on them)
 - [ ] cli: `kazu run [scenario] [--suite] --base --head [--seed] [--json]` wired through config → plan → driver → controller → checks → verdict; one shop trial end to end
 
@@ -310,6 +311,7 @@ What working backwards from the screens changed or confirmed:
 
 - **A user's compose restart policy vs `crash`**: `restart: always` restarts the container before its `for` ends, so the fault barely happens. Claude's proposal: Kazu sets the target's restart policy to `no` for the trial and `kazu doctor` lists services that have one. Decide before Phase 4's process-faults PR.
 - **`cpu` fault: a load or a quota?** The schema has `load` today. Claude's proposal: a cgroup quota (`docker update --cpus`), as Antithesis throttles CPU time: nothing needed in the user's image, and less runner noise than a stress load. Changes the `cpu` (and possibly `memory`) fields. Decide before Phase 6's resource-faults PR.
+- **How trials are configured** (a per-scenario trial budget, e.g. `max_trials`): deferred to Phase 5, decided with the verdict-method spike. Run-wide `gate.trials` stays as designed.
 - **Spikes before committing** (DESIGN §8): the verdict method before Phase 5's stats work; K3s on GitHub-hosted runners before Phase 7.
 
 Resolved since the old plan: CI on stacked PRs (#18); the schema decisions (ADR-0002's 14, plus ADR-0004's relative triggers, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14); row S1's head is the same as its base, the trap alone, since every scenario runs whether or not base and head differ ([ADR-0010](docs/adr/0010-every-scenario-runs-on-every-run.md)); the latency fault's direction (`response` by default, or `request`; [ADR-0008](docs/adr/0008-network-faults-have-a-direction.md)).
