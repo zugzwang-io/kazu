@@ -13,7 +13,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 | In v1 | Deferred, and where |
 |---|---|
 | Compose driver; sealed, fresh system per trial | Kubernetes (K3s) driver → Phase 7 (v1.1) |
-| Faults: `latency`, `down`, `blackhole`, `reset`, `bandwidth`, `errors`, `timeout`, `crash`, `pause`, `cpu`, `memory`, `disk_full`; wall-clock and request-count triggers | Kernel-level partitions, in-code SDK fault points → not planned |
+| Faults: `latency`, `down`, `partition`, `reset`, `bandwidth`, `errors`, `crash`, `pause`, `cpu`, `memory`, `disk_full`; wall-clock and request-count triggers | Kernel-level partitions, in-code SDK fault points → not planned |
 | Default checks: setup facts, crashes, exits, traffic exit, landed, no-data; regression defaults on user-facing edges; opt-in language log checks | Traces as evidence → Phase 10 |
 | Checks: Python, TypeScript and Go SDK images with `@after`/`@eventually`; one-line `sql`, `http`, `recovers`, `no_regression`, `slo`, `metric` | Java/Kotlin, Ruby SDKs → community, after v1 |
 | OTLP receiver, per-trial metric store, PromQL | — |
@@ -70,9 +70,10 @@ Proxy (`kazu proxy`, one container per declared edge; tests run against an in-pr
 - [x] #48 proxy bench: direct vs proxied throughput, round-trip and connect benchmarks; advisory base-vs-head CI job
 - [x] #52 ADR-0008 (accepted 2026-11-26): network faults have a direction; `blackhole` becomes `partition`; `timeout` is dropped
 - [x] #60 config: fault direction (latency, reset, bandwidth), blackhole renamed partition, timeout removed, same-kind overlap rejected
-- [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in both directions, seeded; records the open latency decision in SPEC.md
-- [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`
-- [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; applied-fault counters for the landed check
+- [x] #63 design: ADR-0008 folded into DESIGN.md, PLAN.md and SPEC.md
+- [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in the fault's `direction` (default `response`), seeded; error answers the proxy writes later pass through it
+- [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`; asserts that `direction` is rejected and that `down` wins over every other fault
+- [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; the per-direction pipeline with the partition's read and write gates and the stage order; applied-fault counters with a direction label for the landed check
 - [ ] proxy 5/5: `kazu.proxy.v1` Protobuf + gRPC control service (load program, start clock, read counters); `buf` set up for the repo (the checks protocol reuses it later)
 - [ ] image: Dockerfile for the `kazu` image; the driver runs proxies from the image matching its own version (GHCR publishing is Phase 5)
 
@@ -102,7 +103,7 @@ Verdict and CLI:
 Shop and the e2e gate:
 
 - [ ] templates: `templates/k6/traffic.js` (DESIGN §4.3) and the shop's `load/traffic.js` edited from it
-- [x] #33 shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a blackholed database hangs them, fills payments' in-flight limit and turns into mass `failed` orders
+- [x] #33 shop: post-charge writes get a deadline (payments' charge row, checkout's order resolve): a detached context keeps no deadline, so a database that stops answering hangs them, fills payments' in-flight limit and turns into mass `failed` orders
 - [x] #34 shop: a test for a connection reset mid-request (→ `pending`); it found net/http silently resending a reset request, which could mark a charged order `failed` (fixed)
 - [x] #35 shop: integration tests open one pool per service with production settings and `search_path`, not one shared pool
 - [x] #36 shop: hygiene — `attemptResult`'s zero value is not `paid`; `svc.EnvInt` rejects values below 1; attempt errors are logged; shared `/healthz` and DB setup in `internal/svc`
@@ -117,11 +118,11 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 - [ ] seeds: `--seed`, printed and recorded; the `(seed, edge, request number)` PRNG helper every probabilistic fault uses
 - [ ] proxy: HTTP mode — request/response framing, per-request latency histogram, status classes, request counter per edge
 - [ ] proxy: `after_requests` triggers on `http` edges, with the runtime guard that mirrors config 5/5
-- [ ] proxy: `errors` (rate, code) and `timeout` (rate) faults on HTTP edges
+- [ ] proxy: `errors` (rate, code) fault on HTTP edges
 - [ ] proxy: gRPC mode — HTTP/2 framing, `grpc-status` trailers, `errors` with gRPC codes
-- [ ] proxy: `blackhole`, `reset`, `bandwidth`
+- [ ] proxy: `partition`, `reset`, `bandwidth` — the partition holds both ways and delivers on heal; `reset` draws per request on `http`/`grpc` edges (needs the HTTP mode's request counter) and per connection on `tcp` edges
 - [ ] events: Docker event and exit watcher → default checks: ready, no unexpected crash (signal), no unexpected exit (non-zero, OOM, crash loop), traffic exited 0; one-shot jobs exempt
-- [ ] process faults: `crash` (kill in place, `restart_after`) and `pause`, recorded as Kazu's own so the crash default excludes them
+- [ ] process faults: `crash` (kill in place, restarted after `for`) and `pause`, recorded as Kazu's own so the crash default excludes them
 - [ ] checks: `@eventually(within=…)` in the SDK and the host's retry loop
 - [ ] checks: `http:` one-line check and the `http` SDK callback
 - [ ] plan: resolve fault anchors (`from`, joins) into times (ADR-0004)
@@ -246,7 +247,8 @@ Ideas gathered from Toxiproxy, netem/Pumba, Envoy/Istio/gRPC fault injection, Ch
 - `slicer`: split writes into small chunks — framing and partial-read bugs.
 - Heavy-tail latency distributions (normal, pareto) and correlated delay — p99 behaviour uniform jitter hides.
 - `slow_close`: delay the close after EOF.
-- Per-connection probability for `latency` and `blackhole`, seeded.
+- Per-connection probability for `latency` and `partition`, seeded.
+- Per-scenario override of the order faults compose in when they overlap on one edge.
 - Connect-time faults (SYN drop, connect latency) via a DROP rule in the proxy's own network namespace — missing connect timeouts.
 - Edge connection cap: limit concurrent upstream connections — pool sizing and acquire-timeout bugs.
 
@@ -304,9 +306,8 @@ What working backwards from the screens changed or confirmed:
 
 ## Open decisions
 
-- **Latency fault — delay request, response, or both?** Claude's proposal: both directions per chunk, like real network latency. Decide in proxy 2/5; record in SPEC.md.
-- **A user's compose restart policy vs `crash`**: `restart: always` restarts the container before `restart_after`, so the fault barely happens. Claude's proposal: Kazu sets the target's restart policy to `no` for the trial and `kazu doctor` lists services that have one. Decide before Phase 4's process-faults PR.
+- **A user's compose restart policy vs `crash`**: `restart: always` restarts the container before its `for` ends, so the fault barely happens. Claude's proposal: Kazu sets the target's restart policy to `no` for the trial and `kazu doctor` lists services that have one. Decide before Phase 4's process-faults PR.
 - **`cpu` fault: a load or a quota?** The schema has `load` today. Claude's proposal: a cgroup quota (`docker update --cpus`), as Antithesis throttles CPU time: nothing needed in the user's image, and less runner noise than a stress load. Changes the `cpu` (and possibly `memory`) fields. Decide before Phase 6's resource-faults PR.
 - **Spikes before committing** (DESIGN §8): the verdict method before Phase 5's stats work; K3s on GitHub-hosted runners before Phase 7.
 
-Resolved since the old plan: CI on stacked PRs (#18); the schema decisions (ADR-0002's 14, plus ADR-0004's relative triggers, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14); row S1's head is the same as its base, the trap alone, since every scenario runs whether or not base and head differ ([ADR-0010](docs/adr/0010-every-scenario-runs-on-every-run.md)).
+Resolved since the old plan: CI on stacked PRs (#18); the schema decisions (ADR-0002's 14, plus ADR-0004's relative triggers, pending acceptance with #13); the platform design exercise (this plan and the frontend sketch), which found no reason to change the config contract; K3s out of v1.0 ([ADR-0003](docs/adr/0003-v1-is-compose-only.md), agreed 2026-10-14); row S1's head is the same as its base, the trap alone, since every scenario runs whether or not base and head differ ([ADR-0010](docs/adr/0010-every-scenario-runs-on-every-run.md)); the latency fault's direction (`response` by default, or `request`; [ADR-0008](docs/adr/0008-network-faults-have-a-direction.md)).

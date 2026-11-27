@@ -324,8 +324,6 @@ Choices that matter to a bug, recorded as the code makes them.
 
 ## Open questions
 
-- Whether `blackhole` lands in step 1 or 2 of the proxy.
-- Whether a latency fault delays the request or the response (a Kazu proxy choice; decided in its PR).
-
-Decided for the proxy, because the shop's outcome rules depend on it: `down` **refuses** new connections (ECONNREFUSED, which checkout treats as definitely not processed → `failed`) and **resets** live ones (an unknown outcome → `pending`). Accepting and then closing would turn a dead service into an unknown outcome.
 - Whether the worker processes messages concurrently (step 4).
+
+Decided for the proxy, because the shop's outcome rules depend on it: `down` **refuses** new connections (ECONNREFUSED, which checkout treats as definitely not processed → `failed`) and **resets** live ones (an unknown outcome → `pending`). Accepting and then closing would turn a dead service into an unknown outcome. `latency` delays the **response** by default, so payments acts on time and checkout's 1 s timeout turns a long delay into silent response loss (`pending`, then the reconciler); `direction: request` delivers the request late, after checkout may have given up. `partition` holds traffic both ways and delivers it when the window ends, so same-key retries sent during the split arrive at payments together, a test of its dedup; it is a proxy fault, landing in Phase 4 with `reset` and `bandwidth`. `reset` with `direction: response` gives response loss with an error: payments has done the work, checkout gets ECONNRESET on that attempt, and if no attempt gets an answer the order stays `pending`.

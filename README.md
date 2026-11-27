@@ -81,7 +81,7 @@ Each fault produces one distinct outcome; there is exactly one natural way to ex
 
 | Fault | Mimics | What the service does | What its callers see |
 |---|---|---|---|
-| `crash` | a process dying | killed, then restarted in place after its `for` | resets on live connections, refused connections until it is back |
+| `crash` | a process dying | killed, then restarted in place after `for` (without `for`, it stays down until traffic exits) | resets on live connections, refused connections until it is back |
 | `pause` | a process frozen (a long GC pause, a stopped VM) | frozen for the window, then carries on | silence: connections stay open with no answers |
 | `cpu`, `memory` | a starved host | runs under CPU or memory pressure (mechanism still open: a load or a quota) | slower answers, or an out-of-memory kill |
 | `disk_full` | a full disk | writes fail with "no space left" | whatever errors the service returns |
@@ -97,7 +97,7 @@ Bytes in each direction pass through these stages in order:
 - `reset` beats `errors`, so a request drawn by both is cut.
 - Error answers pass through response latency, which gives slow errors.
 
-Two faults of the same type overlapping on one edge are rejected; sequence them with `from:` instead.
+Two faults of the same type can't be active on the same target at once: the same edge for network and HTTP faults, the same service for process and resource faults. Sequence them with `from:`, or space them apart in wall-clock time; a fault that waits on a request count is treated as running forever, so only `from:` sequencing separates it. A `crash` with `for` is down for that long, then restarted.
 
 Response loss, where the callee did the work but the caller never gets the answer, has two forms: silent (`latency` past the caller's timeout) and with an error (`reset` with `direction: response`).
 
