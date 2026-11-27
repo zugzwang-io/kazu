@@ -106,6 +106,8 @@ The two OS measures are Linux-only, which is acceptable because runners are Linu
 So the five measures bound what the proxy's own code, its runtime and its share of the CPU added. They are evidence that the proxy wasn't the cause, not a proof that covers the kernel's network path.
 - The extra hop is the constant part (the +28µs per round trip above), paid alike by base and head and tracked by the bench job.
 - On Linux, `TCP_INFO` and the accept-queue depth could cover part of the kernel's network share. That isn't built until these measures prove insufficient.
+- Steal time is visible only for the whole machine, in `/proc/stat`. Reading it there is a possible later addition.
+- Two entries in the table are unverified as of 2026-11-27: that `cpu.stat` doesn't show throttling from a limit on a parent cgroup, and that `schedstat` loses the numbers of threads that exit between snapshots. The PR that builds the OS measures checks both.
 
 The two timings and the Go histogram are kept as histograms with a count, so a trial reports p50, p99 and max. The two OS measures are totals per trial.
 
