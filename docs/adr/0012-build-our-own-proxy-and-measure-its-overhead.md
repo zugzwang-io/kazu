@@ -1,7 +1,7 @@
 # ADR-0012: Kazu builds its own proxy, and measures what the proxy added
 
 Date: 2026-11-26
-Status: Proposed
+Status: Accepted (2026-11-27)
 
 ## Context
 
