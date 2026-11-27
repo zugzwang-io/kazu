@@ -263,6 +263,11 @@ func TestSchemaRejects(t *testing.T) {
 		{"requests with an unknown key", check("image: x, requires: [ { requests: { service: b, min: 1, max: 5 } } ]"), "/checks/0/requires/0/requests", "additional properties 'max' not allowed"},
 		{"requests on an edge without an arrow", check("image: x, requires: [ { requests: { edge: a b, min: 1 } } ]"), "/checks/0/requires/0/requests/edge", "does not match pattern"},
 		{"check severity other than fail or warn", check("image: x, not_exercised: ignore"), "/checks/0/not_exercised", "value must be one of 'fail', 'warn'"},
+		{"sql check with an empty query", check("sql: { on: pg, query: '' }"), "/checks/0/sql/query", "minLength"},
+		{"sql check with a blank query", check("sql: { on: pg, query: '  ' }"), "/checks/0/sql/query", "does not match pattern"},
+		{"requires sql with an empty query", check("image: x, requires: [ { sql: { on: pg, query: '' } } ]"), "/checks/0/requires/0/sql/query", "minLength"},
+		{"requires sql with a blank query", check("image: x, requires: [ { sql: { on: pg, query: \"\\t \" } } ]"), "/checks/0/requires/0/sql/query", "does not match pattern"},
+		{"requests on a service name with a space", check("image: x, requires: [ { requests: { service: 'a b', min: 1 } } ]"), "/checks/0/requires/0/requests/service", "does not match pattern"},
 		{"requires on its own", check("requires: [ { requests: { service: b, min: 1 } } ]"), "/checks/0", "'oneOf' failed"},
 		{"scenario check with two kinds", head + "scenarios: { s: { checks: [ { image: x, sql: { on: pg, query: x } } ] } }\n", "/scenarios/s/checks/0", "'oneOf' failed"},
 

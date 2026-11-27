@@ -241,9 +241,6 @@ func TestFormats(t *testing.T) {
 	if f := firstFault(t, "service: payments, fault: cpu, load: 90%"); f.Load != 90 {
 		t.Errorf("load = %v", f.Load)
 	}
-	if f := firstFault(t, "service: payments, fault: crash, after_requests: 0x10"); f.AfterRequests != 16 {
-		t.Errorf("after_requests 0x10 = %d, want 16 (YAML's value, not the text)", f.AfterRequests)
-	}
 	cfg := parse(t, "checks: [ { no_regression: { service: payments, measure: p99, within: 150% } } ]\n")
 	if w := cfg.Checks[0].NoRegression.Within; w != 150 {
 		t.Errorf("within 150%% = %v", w)
@@ -286,6 +283,13 @@ func TestRejectsLossyNumbers(t *testing.T) {
 		{"exponent as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 2e2 } ] } }\n", "expected a whole number, got 2e2"},
 		{"oversized request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 99999999999999999999 } ] } }\n", "expected a whole number"},
 		{"float as a required request count", "checks: [ { image: x, requires: [ { requests: { service: payments, min: 50.0 } } ] } ]\n", "expected a whole number, got 50.0"},
+		{"hex as a required request count", "checks: [ { image: x, requires: [ { requests: { service: payments, min: 0x10 } } ] } ]\n", "kazu.yaml:10:73: write 16, not 0x10"},
+		{"leading zero as a required request count", "checks: [ { image: x, requires: [ { requests: { service: payments, min: 010 } } ] } ]\n", "kazu.yaml:10:73: write 8, not 010"},
+		{"leading zero as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 010 } ] } }\n", "write 8, not 010"},
+		{"hex as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 0x10 } ] } }\n", "write 16, not 0x10"},
+		{"octal as a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 0o10 } ] } }\n", "write 8, not 0o10"},
+		{"underscores in a request count", "scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 1_0 } ] } }\n", "write 10, not 1_0"},
+		{"leading zero as a status", "checks: [ { http: { on: postgres, path: /x, expect: { status: 0200 } } } ]\n", "write 128, not 0200"},
 		{"float status", "checks: [ { http: { on: postgres, path: /x, expect: { status: 200.0 } } } ]\n", "expected a whole number, got 200.0"},
 		{"duration overflow", "scenarios: { a: { faults: [ { service: payments, fault: down, after: 9999999999999h } ] } }\n", "is not a duration Kazu can hold"},
 		{"percent overflow", "checks: [ { no_regression: { service: payments, measure: p99, within: 1" + strings.Repeat("0", 400) + "% } } ]\n", "is too large a number"},
@@ -305,6 +309,16 @@ func TestRejectsLossyNumbers(t *testing.T) {
 				t.Errorf("error = %v, want %q with the file name", err, tt.want)
 			}
 		})
+	}
+}
+
+// A number too large to hold is reported as that alone, not also as a
+// spelling to correct.
+func TestOversizedHexIsOneProblem(t *testing.T) {
+	_, err := config.Parse("kazu.yaml", []byte(base+"scenarios: { a: { faults: [ { service: payments, fault: crash, after_requests: 0xFFFFFFFFFFFFFFFF } ] } }\n"))
+	want := "kazu.yaml:10:80: 0xFFFFFFFFFFFFFFFF is too large a number"
+	if err == nil || err.Error() != want {
+		t.Errorf("got  %v\nwant %s", err, want)
 	}
 }
 
@@ -395,7 +409,7 @@ scenarios:
 func TestRequiresAndNotExercised(t *testing.T) {
 	cfg := parse(t, `checks:
   - image: x
-    requires: [ { requests: { edge: checkout->payments, min: 0x10 } } ]
+    requires: [ { requests: { edge: checkout->payments, min: 16 } } ]
     not_exercised: warn
   - sql: { on: postgres, query: select 2 }
     requires:

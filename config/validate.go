@@ -309,19 +309,19 @@ func (v *validator) checks(list []string, cs []Check, taken map[string]bool) map
 		switch c.Kind {
 		case ImageCheck:
 		case SQLCheck:
-			v.connection(at(body, "on"), c.SQL.On, "postgres")
+			v.connection(at(body, "on"), c.SQL.On, "postgres", aCheck)
 		case HTTPCheck:
-			v.connection(at(body, "on"), c.HTTP.On, "http")
+			v.connection(at(body, "on"), c.HTTP.On, "http", aCheck)
 		case RecoversCheck:
 			v.positive(at(body, "within"), c.Recovers.Within)
-			v.measured(at(body, "service"), c.Recovers.Service)
+			v.measured(at(body, "service"), c.Recovers.Service, aCheck)
 		case NoRegressionCheck:
-			v.measured(at(body, "service"), c.NoRegression.Service)
+			v.measured(at(body, "service"), c.NoRegression.Service, aCheck)
 		case SLOCheck:
 			if c.SLO.Measure != ErrorRate {
 				v.positive(at(body, "max"), c.SLO.MaxLatency)
 			}
-			v.measured(at(body, "service"), c.SLO.Service)
+			v.measured(at(body, "service"), c.SLO.Service, aCheck)
 		case MetricCheck:
 			if m := c.Metric; m.Max != nil && m.Min != nil && *m.Min > *m.Max {
 				v.ps.add(at(body), fmt.Sprintf("min (%g) is above max (%g), so no value can pass", *m.Min, *m.Max))
@@ -333,16 +333,17 @@ func (v *validator) checks(list []string, cs []Check, taken map[string]bool) map
 
 // requirement checks what one of a check's conditions reads: a postgres
 // connection for sql; for requests, an http or grpc edge, or a service with
-// one inbound, since a tcp proxy has no requests to count.
+// at least one http or grpc inbound edge, since a tcp proxy has no requests
+// to count.
 func (v *validator) requirement(path []string, r Requirement) {
 	at := func(keys ...string) []string { return append(slices.Clone(path), keys...) }
 	switch r.Kind {
 	case SQLRequirement:
-		v.connection(at("sql", "on"), r.SQL.On, "postgres")
+		v.connection(at("sql", "on"), r.SQL.On, "postgres", aCondition)
 	case RequestsRequirement:
 		rq := r.Requests
 		if rq.Service != "" {
-			v.measured(at("requests", "service"), rq.Service)
+			v.measured(at("requests", "service"), rq.Service, aCondition)
 			return
 		}
 		edge, ok := v.cfg.Edge(rq.Edge)
@@ -355,9 +356,9 @@ func (v *validator) requirement(path []string, r Requirement) {
 	}
 }
 
-// connection checks that a check's connection exists and has a URL scheme
-// the check can use: postgres for sql, http or https for http.
-func (v *validator) connection(path []string, name, scheme string) {
+// connection checks that a connection exists and has a URL scheme its user
+// can use: postgres for sql, http or https for http.
+func (v *validator) connection(path []string, name, scheme string, r reader) {
 	var names []string
 	for _, c := range v.cfg.Connections {
 		if c.Name != name {
@@ -366,7 +367,7 @@ func (v *validator) connection(path []string, name, scheme string) {
 		}
 		got, _, _ := strings.Cut(c.URL, "://")
 		if !strings.HasPrefix(got, scheme) {
-			v.ps.add(path, fmt.Sprintf("%s is a %s:// connection; this check needs a %s:// one", name, got, scheme))
+			v.ps.add(path, fmt.Sprintf("%s is a %s:// connection; this %s needs a %s:// one", name, got, r.noun, scheme))
 		}
 		return
 	}
@@ -379,9 +380,40 @@ func (v *validator) connection(path []string, name, scheme string) {
 	v.ps.add(path, msg)
 }
 
+// reader is what uses a connection or reads a service's proxies: a check
+// or a requires condition, worded for messages.
+type reader struct {
+	noun string // "check"
+	does string // what the proxy does for it: "measures it"
+	// fromTraffic is the remedy when it names traffic, given a user-facing
+	// edge.
+	fromTraffic func(Edge) string
+}
+
+var (
+	aCheck = reader{"check", "measures it", func(e Edge) string {
+		return "measure a service it calls, e.g. service: " + e.Callee
+	}}
+	aCondition = reader{"condition", "counts its requests", func(e Edge) string {
+		return "count an edge from traffic, e.g. edge: " + e.Name()
+	}}
+)
+
 // measured checks that a service has a declared inbound edge whose proxy
-// measures requests, which recovers, no_regression and slo read.
-func (v *validator) measured(path []string, service string) {
+// parses requests, which recovers, no_regression, slo and requests
+// conditions read.
+func (v *validator) measured(path []string, service string, r reader) {
+	if service == Traffic {
+		msg := "traffic sends the load, so no proxy " + r.does
+		for _, e := range v.cfg.Edges {
+			if e.UserFacing() {
+				msg += "; " + r.fromTraffic(e)
+				break
+			}
+		}
+		v.ps.add(path, msg)
+		return
+	}
 	in := v.cfg.Inbound(service)
 	for _, e := range in {
 		if e.Protocol.RequestLevel() {
@@ -393,10 +425,10 @@ func (v *validator) measured(path []string, service string) {
 		for _, e := range v.cfg.Edges {
 			callees = append(callees, e.Callee)
 		}
-		v.ps.add(path, fmt.Sprintf("%s has no declared inbound edges, so no proxy measures it; declare an http or grpc edge into %s", service, service)+suggest(service, callees))
+		v.ps.add(path, fmt.Sprintf("%s has no declared inbound edges, so no proxy %s; declare an http or grpc edge into %s", service, r.does, service)+suggest(service, callees))
 		return
 	}
-	v.ps.add(path, fmt.Sprintf("%s's declared inbound edges are all tcp, where the proxy sees bytes, not requests; this check needs an http or grpc edge into %s", service, service))
+	v.ps.add(path, fmt.Sprintf("%s's declared inbound edges are all tcp, where the proxy sees bytes, not requests; this %s needs an http or grpc edge into %s", service, r.noun, service))
 }
 
 func (v *validator) suiteEntry(path []string, name string) {

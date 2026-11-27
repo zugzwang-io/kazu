@@ -256,6 +256,7 @@ var patternNames = map[string]string{
 	"^[A-Za-z_][A-Za-z0-9_]*$":                                         "an env var name",
 	"^[A-Za-z_][A-Za-z0-9_]*=":                                         "an env var written as NAME=value",
 	"^/":                                                               "a path starting with /",
+	"\\S":                                                              "text other than spaces",
 }
 
 func describePattern(p string) string {

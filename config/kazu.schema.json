@@ -373,7 +373,7 @@
       "required": ["on", "query"],
       "properties": {
         "on": { "$ref": "#/$defs/name" },
-        "query": { "type": "string", "minLength": 1 }
+        "query": { "type": "string", "minLength": 1, "pattern": "\\S" }
       }
     },
     "requirement": {

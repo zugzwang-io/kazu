@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -308,8 +309,9 @@ func (d *decoder) fail(n *yaml.Node, msg string) {
 	d.ps.put(Problem{Line: n.Line, Column: n.Column, Message: msg})
 }
 
-// integer reads a whole number as YAML resolves it (0x10 is 16), rejecting
-// floats the schema can't distinguish from integers (200.0).
+// integer reads a whole number written in plain decimal. It rejects floats
+// the schema can't distinguish from integers (200.0), and the forms YAML
+// reads as another value (010 is 8, 0x10 is 16, 1_0 is 10).
 func (d *decoder) integer(n *yaml.Node) int {
 	if n.ShortTag() != "!!int" {
 		d.fail(n, "expected a whole number, got "+n.Value)
@@ -318,9 +320,15 @@ func (d *decoder) integer(n *yaml.Node) int {
 	var i int
 	if err := n.Decode(&i); err != nil {
 		d.fail(n, n.Value+" is too large a number")
+		return 0
+	}
+	if !decimal.MatchString(n.Value) {
+		d.fail(n, fmt.Sprintf("write %d, not %s", i, n.Value))
 	}
 	return i
 }
+
+var decimal = regexp.MustCompile(`^(0|-?[1-9][0-9]*)$`)
 
 func (d *decoder) float(n *yaml.Node) float64 {
 	var f float64
