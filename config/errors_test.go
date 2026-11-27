@@ -111,6 +111,37 @@ func TestProblems(t *testing.T) {
 		{"slo latency as a percent", "checks:\n  - { slo: { service: checkout, measure: p99, max: 1% } }\n", []string{
 			`11:52: checks[0].slo.max: "1%" is not a duration such as 300ms, 20s or 1m30s`,
 		}},
+		{"empty requires", "checks:\n  - { image: x, requires: [] }\n", []string{
+			`11:27: checks[0].requires: must not be empty`,
+		}},
+		{"requirement with both kinds", "checks:\n  - image: x\n    requires:\n      - { sql: { on: postgres, query: x }, requests: { service: payments, min: 1 } }\n", []string{
+			`13:9: checks[0].requires[0]: has sql and requests; keep one`,
+		}},
+		{"requirement with neither kind", "checks:\n  - image: x\n    requires:\n      - { sqll: { on: postgres, query: x } }\n", []string{
+			`13:9: checks[0].requires[0]: needs one of sql or requests`,
+			`13:11: checks[0].requires[0].sqll: unknown key "sqll" (did you mean "sql"?)`,
+		}},
+		{"requests with edge and service", "checks:\n  - image: x\n    requires:\n      - requests: { edge: checkout -> payments, service: payments, min: 1 }\n", []string{
+			`13:19: checks[0].requires[0].requests: has edge and service; keep one`,
+		}},
+		{"requests with min 0", "checks:\n  - image: x\n    requires:\n      - requests: { service: payments, min: 0 }\n", []string{
+			`13:45: checks[0].requires[0].requests.min: must be at least 1`,
+		}},
+		{"requests with neither edge nor service", "checks:\n  - image: x\n    requires:\n      - requests: { min: 1 }\n", []string{
+			`13:19: checks[0].requires[0].requests: needs one of edge or service`,
+		}},
+		{"requests without min", "checks:\n  - image: x\n    requires:\n      - requests: { service: payments }\n", []string{
+			`13:19: checks[0].requires[0].requests: missing key "min"`,
+		}},
+		{"check severity other than fail or warn", "checks:\n  - { image: x, not_exercised: ignore }\n", []string{
+			`11:32: checks[0].not_exercised: "ignore" is not one of "fail", "warn"`,
+		}},
+		{"requests on an unknown edge written unspaced", "checks:\n  - image: x\n    requires:\n      - requests: { edge: checkout->paymnts, min: 1 }\n", []string{
+			`13:27: checks[0].requires[0].requests.edge: checkout -> paymnts is not a declared edge; requests are counted only on edges listed under edges (did you mean "checkout -> payments"?)`,
+		}},
+		{"blank sql query", "checks:\n  - { sql: { on: postgres, query: '  ' } }\n", []string{
+			`11:35: checks[0].sql.query: "  " is not text other than spaces`,
+		}},
 		{"empty suite", "suites:\n  pr: []\n", []string{
 			`11:7: suites.pr: must not be empty`,
 		}},
@@ -141,7 +172,7 @@ func TestProblems(t *testing.T) {
 			`13:68: scenarios.a.faults[0].after_requests: expected a whole number, got text`,
 		}},
 		{"true or false where text goes", "checks:\n  - { sql: { on: postgres, query: true } }\n", []string{
-			`11:35: checks[0].sql.query: expected text, got true or false`,
+			`11:35: checks[0].sql.query: expected text other than spaces, got true or false`,
 		}},
 		{"nothing where text goes", "checks:\n  - { image: }\n", []string{
 			`11:14: checks[0].image: expected text, got nothing`,

@@ -252,24 +252,28 @@
       ]
     },
     "check": {
-      "description": "One user check: exactly one of image, sql, http, recovers, no_regression, slo or metric, plus an optional name. command, volumes and environment go with image.",
+      "description": "One user check: exactly one of image, sql, http, recovers, no_regression, slo or metric, plus an optional name, requires and not_exercised. command, volumes and environment go with image.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "name": { "$ref": "#/$defs/name" },
+        "requires": {
+          "description": "Conditions that must all hold in a trial for the check to count there. A check whose conditions never hold, on base or head, is not exercised rather than passed.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/requirement" }
+        },
+        "not_exercised": {
+          "description": "The check's severity when it is not exercised; it overrides the scenario's.",
+          "$ref": "#/$defs/severity"
+        },
         "image": { "type": "string", "minLength": 1 },
         "command": { "type": "array", "items": { "type": "string" } },
         "volumes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "environment": { "$ref": "#/$defs/environment" },
         "sql": {
           "description": "Passes when the query returns no rows: select what would be a violation.",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["on", "query"],
-          "properties": {
-            "on": { "$ref": "#/$defs/name" },
-            "query": { "type": "string", "minLength": 1 }
-          }
+          "$ref": "#/$defs/query"
         },
         "http": {
           "type": "object",
@@ -361,6 +365,46 @@
         "volumes": ["image"],
         "environment": ["image"]
       }
+    },
+    "query": {
+      "description": "A SQL query on a postgres connection, named under connections.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on", "query"],
+      "properties": {
+        "on": { "$ref": "#/$defs/name" },
+        "query": { "type": "string", "minLength": 1, "pattern": "\\S" }
+      }
+    },
+    "requirement": {
+      "description": "One condition a check requires: exactly one of sql or requests.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sql": {
+          "description": "Holds when the query returns at least one row.",
+          "$ref": "#/$defs/query"
+        },
+        "requests": {
+          "description": "Holds when the proxy received at least min requests between traffic start and traffic exit: on one http or grpc edge, or summed over a service's http and grpc inbound edges. A request is one HTTP request or one gRPC call.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min"],
+          "properties": {
+            "edge": { "$ref": "#/$defs/edgeName" },
+            "service": { "$ref": "#/$defs/name" },
+            "min": { "type": "integer", "minimum": 1 }
+          },
+          "oneOf": [
+            { "required": ["edge"] },
+            { "required": ["service"] }
+          ]
+        }
+      },
+      "oneOf": [
+        { "required": ["sql"] },
+        { "required": ["requests"] }
+      ]
     },
     "measure": { "enum": ["p50", "p90", "p95", "p99", "error_rate"] }
   }

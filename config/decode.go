@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -215,13 +216,21 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 	} else {
 		c.Name = fmt.Sprintf("%s-%d", c.Kind, i+1)
 	}
+	if v := f["requires"]; v != nil {
+		for _, rn := range v.Content {
+			c.Requires = append(c.Requires, d.requirement(rn))
+		}
+	}
+	if v := f["not_exercised"]; v != nil {
+		c.NotExercised = Severity(v.Value)
+	}
 	bf := fields(f[string(c.Kind)])
 	switch c.Kind {
 	case ImageCheck:
 		svc := service(n)
 		c.Image = &svc
 	case SQLCheck:
-		c.SQL = &SQL{On: bf["on"].Value, Query: bf["query"].Value}
+		c.SQL = sqlQuery(f[string(c.Kind)])
 	case HTTPCheck:
 		h := &HTTPRequest{On: bf["on"].Value, Method: "GET", Path: bf["path"].Value}
 		if m := bf["method"]; m != nil {
@@ -270,6 +279,29 @@ func (d *decoder) check(i int, n *yaml.Node) Check {
 	return c
 }
 
+// requirement decodes one entry of a check's requires; the schema
+// guarantees exactly one kind key.
+func (d *decoder) requirement(n *yaml.Node) Requirement {
+	f := fields(n)
+	if v := f["sql"]; v != nil {
+		return Requirement{Kind: SQLRequirement, SQL: sqlQuery(v)}
+	}
+	rf := fields(f["requests"])
+	rq := &Requests{Min: d.integer(rf["min"])}
+	if v := rf["edge"]; v != nil {
+		rq.Edge = canonicalEdge(v.Value)
+	}
+	if v := rf["service"]; v != nil {
+		rq.Service = v.Value
+	}
+	return Requirement{Kind: RequestsRequirement, Requests: rq}
+}
+
+func sqlQuery(n *yaml.Node) *SQL {
+	f := fields(n)
+	return &SQL{On: f["on"].Value, Query: f["query"].Value}
+}
+
 // Scalar readers. Each records a problem at the node instead of returning a
 // zero that would read as a legitimate value.
 
@@ -277,8 +309,9 @@ func (d *decoder) fail(n *yaml.Node, msg string) {
 	d.ps.put(Problem{Line: n.Line, Column: n.Column, Message: msg})
 }
 
-// integer reads a whole number as YAML resolves it (0x10 is 16), rejecting
-// floats the schema can't distinguish from integers (200.0).
+// integer reads a whole number written in plain decimal. It rejects floats
+// the schema can't distinguish from integers (200.0), and the forms YAML
+// reads as another value (010 is 8, 0x10 is 16, 1_0 is 10).
 func (d *decoder) integer(n *yaml.Node) int {
 	if n.ShortTag() != "!!int" {
 		d.fail(n, "expected a whole number, got "+n.Value)
@@ -287,9 +320,15 @@ func (d *decoder) integer(n *yaml.Node) int {
 	var i int
 	if err := n.Decode(&i); err != nil {
 		d.fail(n, n.Value+" is too large a number")
+		return 0
+	}
+	if !decimal.MatchString(n.Value) {
+		d.fail(n, fmt.Sprintf("write %d, not %s", i, n.Value))
 	}
 	return i
 }
+
+var decimal = regexp.MustCompile(`^(0|-?[1-9][0-9]*)$`)
 
 func (d *decoder) float(n *yaml.Node) float64 {
 	var f float64
