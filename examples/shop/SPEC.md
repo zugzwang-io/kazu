@@ -185,7 +185,7 @@ Each is a mistake a reasonable developer could make in a reviewed PR, and must p
 | `SHOP_BUG_SHARED_POOL` | checkout | Holds its database connection while calling payments, to update the order in the same transaction | Correct results; pool starvation needs concurrency and a slow dependency |
 | `SHOP_BUG_POOL_LEAK` | payments | When the fraud call fails, returns 503 without releasing its database connection until a 5 s timeout | Correct results; the pool only drains under concurrent load |
 | `SHOP_BUG_NO_RECONNECT` | payments | Opens one `pgx.Conn` at startup "for performance" instead of a pool, and never redials | Tests never restart the database mid-test |
-| `SHOP_BUG_RACE_P=<p>` | payments | With probability `p` per request, skips the advisory lock, leaving a bare check-then-insert. Uses the service's own unseeded RNG on purpose: nondeterminism Kazu does not control | **Likely disqualified as drafted:** the step-1 suite already sends concurrent duplicate requests (ten at once per key, in the integration and store tests), so it would catch the bare check-then-insert. Redesign before step 3; V9, S5 and S6 and the verdict spike depend on it |
+| `SHOP_BUG_RACE_P=<p>` | payments | With probability `p` per request, skips the advisory lock, leaving a bare check-then-insert. Uses the service's own unseeded RNG on purpose: nondeterminism Kazu does not control | **Likely disqualified as drafted:** the step-1 suite already sends concurrent duplicate requests (ten at once per key, in the integration and store tests), so it would catch the bare check-then-insert. Redesign before step 3; V9, S5 and S6 and the verdict spike depend on it. S6 stops using the race when it is redesigned in the Phase 5 shop-rows PR |
 | `SHOP_BUG_NO_SHEDDING` | payments | The concurrency limit is removed "to stop rejecting customers"; requests queue instead | Correct results; queueing only hurts near capacity |
 | `SHOP_BUG_ACK_BEFORE_WRITE` | worker | Acks the message, then writes ledger entries, with a fixed 50 ms gap | Needs a crash in that window |
 | `SHOP_BUG_REQUEUE_FOREVER` | worker | Failed messages are requeued without a delivery limit, so nothing is dead-lettered | The dead-letter unit test is removed with the feature; harm needs a message that can never succeed |
@@ -239,11 +239,11 @@ Configs written for the test (in `safety/`), each targeting one of Kazu's own me
 | S3 | — | — | an `after_requests` trigger on `checkout -> postgres` (TCP) | **config error** before any trial | Request-count triggers are rejected on TCP edges | 1 |
 | S14 | — | `TIMEOUT_AS_FAILURE` | `payments_slow` | `REGRESSED`, caught by the "failed order with a charge" `sql` check | Base vs head: a check that passes on base and fails on head is a regression, so a Kazu that passes everything fails the gate | 1 |
 | S4 | `RETRY_NEW_KEY` | `RETRY_NEW_KEY` | `payments_slow` | `pass` (violation in both) | Regression, not violation, gates | 3 |
-| S5 | `RACE_P=0.1` | `RACE_P=0.1` | `double_click` | `flaky`, not regressed | Flake classification | 3 |
-| S6 | — | `RACE_P=0.1` | `double_click` | `REGRESSED` given enough trials | Statistical power of adaptive trials | 3 |
-| S7 | — | — | `baseline`, repeated 20 times | `pass` on every `no_regression` in at least the target share of runs | False-positive rate of the per-run noise estimate | 3 |
-| S8 | — | — | `baseline` with a 1% tolerance on user-facing p99 | **underpowered**, not pass or fail | Kazu says when noise is too large to decide | 3 |
-| S9 | — | trap `SCHEMA_V2` | `baseline` | **incompatible with base** for the check reading `currency` | A check that errors on base is reported, not counted | 3 |
+| S5 | `RACE_P`, at the rate below | `RACE_P`, at the same rate | `double_click`, a fixed 14 pairs | fails: **fails intermittently on head** | A check that fails in any head trial fails, even when base flakes too | 3 |
+| S6 | — | a head made worse on a measure by more than the tolerance; redesigned in the Phase 5 shop-rows PR | set with the redesign | `REGRESSED` once enough pairs are in | Statistical power of adaptive trials, on a relative check: a pass/fail check is never undecided, so the race no longer tests it | 3 |
+| S7 | — | — | `baseline`, repeated 20 times | `pass` on every `no_regression` in at least the target share of runs; an underpowered `no_regression` counts as a miss, and the share is set with that in mind | False-positive rate of the per-run noise estimate | 3 |
+| S8 | — | — | `baseline` with a 1% tolerance on user-facing p99 | a failing scenario whose result is **underpowered**, never `pass` and never `REGRESSED` | Kazu says when noise is too large to decide | 3 |
+| S9 | — | trap `SCHEMA_V2` | `baseline` | `pass` for the check reading `currency`, labelled **incompatible with base**, because head passes it | A check that errors on base is judged on head | 3 |
 | S10 | trap `NO_OTEL` | trap `NO_OTEL` | `payments_flaky` | metric checks **no data**, never `pass` | A missing signal is never a pass | 4 |
 | S11 | — | `NO_RECONNECT` | `auto_scenarios`, with every check removed | `REGRESSED` on the `payments -> postgres` down and `postgres` crash scenarios | Defaults and auto scenarios give a verdict from a near-empty config | 4 |
 | S12 | — | `TIMEOUT_AS_FAILURE` | `payments_slow`, **on K3s** | `REGRESSED` | Same verdict from the Kubernetes driver | 4 |
@@ -259,7 +259,7 @@ Every Kazu PR runs the shop as a customer would (DESIGN.md §8, "Testing Kazu"):
 2. **Shop bug proofs:** each flag also has a plain Go test showing the bug happens without Kazu (for example, `TIMEOUT_AS_FAILURE` against a slow payments that completes leaves a charge on a failed order), so a failing row says whether the shop or Kazu broke.
 3. **Bug and mechanics rows:** a small Go asserter, not Kazu, compares each row's JSON result with `expectations.yaml`. Any mismatch blocks the merge, including a recorded miss that is suddenly caught (update the record deliberately) or a caught bug that is suddenly missed (a Kazu regression).
 
-Statistical rows are made decisive for gating: V9 uses a race probability high enough that detection is near certain, S5 asserts "flaky, not regressed" with a wide margin, and S7's 20 repeats run as 20 shards.
+Statistical rows are made decisive for gating: V9 uses a race probability high enough that detection is near certain, and S7's 20 repeats run as 20 shards. S5 needs both sides mixed: the race's rate is set so that a trial fails about half the time, and the row runs a fixed 14 pairs, so each side is mixed in all but about 1 run in 8,200 and the row misses in about 1 run in 4,100. A per-trial rate anywhere from about 0.42 to 0.58 keeps the miss rate under 1 in 1,000 at 14 pairs; that band is the acceptance test for the redesigned flag, and the exact rate is set in the Phase 5 shop-rows PR, with the flag's redesign.
 
 `expectations.yaml` records each row's outcome from real runs:
 

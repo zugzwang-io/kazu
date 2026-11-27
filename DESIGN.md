@@ -40,7 +40,7 @@ Package names differing from the command is normal (`awscli` → `aws`, `azure-c
 2. **The customer provides a complete, isolated system; Kazu owns the wires and the checks.** The system is a compose file or rendered Kubernetes manifests, with no outbound internet, and services reach each other by name. The same packaging contract as Antithesis.
 3. **Fresh environment per trial.** Clean state comes from the customer's own images and seed scripts, never from Kazu.
 4. **Follow Antithesis by default.** Where they have made a design decision for the same problem, we take it. Deviations are deliberate, listed in §6.7, and flagged when they are proposed.
-5. **Fail only on facts; every failure has a switch in the user's config.** Heuristics may warn. A missing signal (a fault that never landed, a metric with no data, a check whose `requires:` was never met) is never a pass, and a comparison too noisy to decide is reported as such, never guessed. Nothing in Kazu can leave a customer blocked with no way forward.
+5. **Fail only on facts; every failure has a way forward in the user's config.** Heuristics may warn. A check passes if Kazu can verify that head is no worse than base, and otherwise fails; a scenario passes if and only if it provably ran and every check passed (§4.6). "No worse" has three proofs: head passed the check, base failed it, or both sides were measured and the comparison puts head within tolerance. An unknown is always resolved against head. So a missing signal (a fault that never landed, a metric with no data, a check whose `requires:` was never met, a comparison too noisy to decide) is never a pass, and a comparison too noisy to decide is reported as underpowered, never guessed to be a regression. Every failure has a way forward in the user's config: a severity switch, `blocking: false` on the scenario, or an edit to the check in head's `kazu.yaml` (fix it, remove it, or `defaults.off`). Results that say nothing about the system (*trial incomplete*) are fixed by running again. Nothing in Kazu can leave a customer blocked with no way forward.
 6. **Never gate correctness; never cap the customer's own compute.** The free tier is complete, correct and as fast as their hardware allows.
 7. **Charge for what costs us money or what an organization needs:** hosting, AI features, cross-team coordination and governance.
 8. **Once free, always free.** No relicensing, no moving features behind a paywall later.
@@ -97,7 +97,7 @@ The variables are usually image tags, so base and head are **images already publ
 
 Kazu takes `kazu.yaml`, traffic and checks from the head commit and pins every image by digest once per run: traffic, checks, and each system service on both base and head. Only the system differs between base and head, so a changed load script can't masquerade as a regression, and a PR can't weaken a check to hide its own regression: a deleted check is gone from both sides. The pins and the resolved base and head variables go in the run record, which `kazu replay` reruns from.
 
-The cost: a PR that changes the system's schema and updates a check to match runs the new check against the old schema on base. A check that **errors** on base (rather than failing an assertion), for example on a missing column, is reported as **incompatible with base**, not as a verdict.
+The cost: a PR that changes the system's schema and updates a check to match runs the new check against the old schema on base. A check that **errors** on base (rather than failing an assertion), for example on a missing column, is reported as **incompatible with base** and judged on head: a pass/fail check that head passed passes, still labelled incompatible with base, and one that head didn't pass fails (§4.6).
 
 ### 4.2 Walkthrough
 
@@ -338,6 +338,7 @@ scenarios:
     faults:
       - { edge: checkout -> payments, fault: latency, delay: 300ms, jitter: 50ms, after: 20s }
   db-blip:
+    underpowered: warn                # not in the schema yet (joins with Phase 5); this scenario's latency is too noisy on our runners to gate on
     faults:
       - { service: postgres, fault: down, after: 20s, for: 15s }   # every declared edge into postgres
     checks:                           # this scenario only, on top of the top-level checks
@@ -351,6 +352,7 @@ scenarios:
     faults:
       - { service: payments, fault: crash, after_requests: 200, for: 5s }
   double-click:
+    blocking: false                   # not in the schema yet (joins with Phase 5); the race in payments is on main already; remove this line when it is fixed
     env: { traffic: { DOUBLE_SUBMIT: "1" } }   # env vars per service, passed through untouched
     checks:
       - name: charged_once
@@ -399,10 +401,9 @@ suites:                               # named sets of scenarios; `kazu run --sui
 gate:                                 # not in the schema yet (joins with Phase 5)
   fail_on: regression                 # or: violation
   trials: auto                        # adaptive; or a fixed number
-  flaky: warn
   not_exercised: fail                 # a fault that never landed, or a check whose requires: was never met, is not a pass
   no_data: fail                       # a metric with no samples is not a pass
-  underpowered: warn                  # a comparison too noisy to decide is reported, not guessed
+  underpowered: fail                  # a comparison too noisy to decide is not a pass; a scenario can set underpowered: warn
 ```
 
 **What the schema carries today** ([ADR-0002](docs/adr/0002-kazu-yaml-schema-shape.md)). The published schema holds the top-level keys Kazu builds next; `telemetry`, `auto_scenarios`, `defaults` and `gate` join it when their phase is built. Inside each key the shape is a good-faith estimate of where the interface lands, and it can change until the first public release, breaking changes included. Before that release the schema is trimmed to what Kazu implements.
@@ -506,7 +507,7 @@ They assert nothing new: the default checks above are the assertions (no crash b
 
 It exists because a regression gate handles pass/fail checks naturally (passed on base, failed on head), but a measurement like p99 has no pass/fail on its own, and absolute thresholds flap on noisy runners. Using base as the yardstick turns a number into a verdict.
 
-**Noise is measured in every run, never assumed.** Different services, endpoints, commits and runners flap differently, so there is no global noise baseline. For each scenario and each measurement, the spread of the head−base differences across this run's trial pairs is the noise estimate. Kazu decides whether head is worse than base by more than N% given that estimate, adding pairs while it is undecided. No extra base-vs-base runs are needed; the paired differences carry the noise. If this run's own noise is too large to resolve N% within the trial budget, the result is **underpowered**: Kazu reports the noise it measured and what would resolve it (a wider tolerance, more trials, a quieter runner), and never guesses. Underpowered is a warning by default (`gate.underpowered`).
+**Noise is measured in every run, never assumed.** Different services, endpoints, commits and runners flap differently, so there is no global noise baseline. For each scenario and each measurement, the spread of the head−base differences across this run's trial pairs is the noise estimate. Kazu decides whether head is worse than base by more than N% given that estimate, adding pairs while it is undecided. No extra base-vs-base runs are needed; the paired differences carry the noise. If this run's own noise is too large to resolve N% within the trial budget, the result is **underpowered**: Kazu reports the noise it measured and what would resolve it (a wider tolerance, more trials, a quieter runner), and never guesses. Underpowered fails by default (`gate.underpowered`); a scenario can downgrade it with `underpowered: warn`.
 
 Noise seen in earlier runs of the same scenario may choose a *starting* trial count, so a known-noisy scenario starts with more pairs. It never decides a verdict.
 
@@ -531,19 +532,38 @@ One list holds every user check, and runs in every scenario. A scenario can add 
 
 Conditions are evaluated once per trial, after every check in the trial has finished, `@eventually` retries included. A `sql` condition therefore sees the trial's final state, which may be up to a minute after the check decided; that is intended, so write conditions about things that persist, not about a transient state such as a pending order. A `requests` condition reads the counts snapshotted at traffic exit. On an `image:` entry, `requires:` applies to every code check in the image and is evaluated once. In an ineligible trial the check's decision still runs and is reported for information, but none of that check's results from that trial count: not its decision, its no data, or its cut-short window. A condition that can't be evaluated (a syntax error, a statement timeout, a refused connection) is a check error, handled like an error in the check itself, never "no rows"; otherwise a broken query would quietly become not exercised, or a pass under `warn`. There are no defaults: a check without `requires:` is always eligible, and the other missing-signal results (a fault that never landed, a `recovers:` window cut short by the end of traffic, no data on a `metric:`, underpowered) keep their rules inside an eligible trial.
 
-**Verdict.** Base and head trials are paired, as for every check. The eligibility comparison and the decision comparison are independent, and either can regress:
+**Verdict.** A check passes if Kazu can verify that head is no worse than base; otherwise it fails. A scenario passes if and only if it provably ran and every check passes ([ADR-0013](docs/adr/0013-a-check-passes-only-if-head-is-verifiably-no-worse-than-base.md)). An unknown is always resolved against head: head is what is under test, so wherever Kazu lacks a fact it takes the reading that is worse for head. The rule applies from the one-pair verdict onward. "No worse" can be shown in exactly three ways:
+1. head passed the check, whatever base did;
+2. base failed the check, whatever head did;
+3. both sides were measured, and the comparison says head is within tolerance. This is how the relative checks work: `no_regression`, a `metric` with `within:`, and the regression defaults.
+
+If none can be shown, the check fails. A pass/fail check offers (1) and (2) for its decision; a relative check offers only (3).
+
+**A pass/fail check that fails in any head trial fails.** With several trial pairs, (1) needs head to pass in every trial where the check was eligible, and (2) needs base to fail in every trial where it was eligible. Kazu doesn't compare failure rates, so a pass/fail check is never undecided, and a failure on head is a plain failure unless base failed in every trial. The result name says which case it is:
+- **REGRESSED**: base had no failing trial among those that could be judged, and head failed in at least one. The counts are shown (`0/5 → 4/5 trials failing`). A base trial that errored is unknown, so it is read as a pass;
+- ***fails intermittently on head***: base failed in some trials but not all, and head is mixed too;
+- ***fails on head***: base failed in some trials but not all, and head failed in every one.
+
+No per-result switch governs these. The way forward, finest first: fix the flake; or remove the check from head's `kazu.yaml`, or switch a built-in off with `defaults.off`; and only then waive the scenario with `blocking: false` (below). The order matters because a top-level check or a correctness default runs in every scenario, and waiving every scenario turns the gate off.
+
+**Eligibility and decision both have to hold.** Base and head trials are paired, as for every check. A check passes only if its eligibility and its decision are both shown no worse; the two comparisons are independent, and either can regress:
 - never eligible in any trial, on either side: **not exercised**, naming the condition that was never met, decided per scenario;
-- eligible in fewer head trials than base trials, including none: a candidate regression (head stopped doing something the check depends on), judged by the base-vs-head comparison on the eligible-trial counts, so `flaky` and `underpowered` apply; no fixed rule decides it;
-- the decision is compared over the pairs in which both sides were eligible; too few such pairs to decide is **underpowered**;
-- eligible on head but never on base (head started doing it) is not a regression on eligibility, and its decision has no pairs, so it is underpowered. A head that starts doing something and gets it wrong is reported as underpowered, not REGRESSED; an accepted gap, since there is nothing on base to regress from;
-- with one base and one head trial per scenario (Phase 3, before the statistical verdict): eligible on base but not on head is REGRESSED; eligible on head but not on base passes; eligible on neither is not exercised; eligible on both compares the decision as for any check. The statistical rules above replace this once the paired comparison lands;
-- under `gate.fail_on: violation` the decision is judged in every head trial where the check is eligible, whatever base did. Eligibility is still compared as above: losing it is a regression, not a violation, and never having it is still not exercised;
-- under adaptive trials, a check not yet eligible on either side leaves its scenario undecided, so pairs are added while the budget lasts; it is not exercised only once the budget is spent;
+- eligible in fewer head trials than base trials, including none: a candidate regression (head stopped doing something the check depends on), judged by the base-vs-head comparison on the eligible-trial counts (proof 3), whatever the decision says; an undecided comparison is **underpowered**; no fixed rule decides it. Base failing in every trial doesn't rescue a head that was never eligible;
+- the decision is judged by the three proofs, over the trials where the check was eligible. A relative check's decision is compared over the pairs in which both sides were eligible; too few such pairs to decide is **underpowered**. A pass/fail check's decision is never underpowered;
+- eligible on head but never on base (head started doing it) is not a regression on eligibility, and there is nothing on base to compare with. A pass/fail check that head passed passes by (1). One that head failed fails as ***new check failing***, not REGRESSED, with no switch of its own; the way forward is the code or the check, both in the PR. A relative check has no proof left and fails as ***no baseline***, whose severity comes from the `underpowered` switches;
+- a trial in which the check errored, or its metric had no data, is unverifiable. On head it blocks (1): the check fails as **no data** (`gate.no_data`) or **check error**, unless it is a pass/fail check that base failed in every trial. On base it blocks (2): a pass/fail check that head didn't pass fails as **incompatible with base** when base errored in every trial (§4.1), or as no data when base had no samples; in a relative check a pair whose base measurement is missing is left out, which leaves fewer pairs to decide with, and no data on base in every trial is no data. A check error has no switch: the checks come from head's `kazu.yaml`, so the way forward is the check itself;
+- with one base and one head trial per scenario (Phase 3, before the statistical verdict): eligible on base but not on head is REGRESSED; eligible on head but not on base is judged by the rule (head passing passes, head failing fails); eligible on neither is not exercised; eligible on both compares the decision as for any check. The statistical rules above replace this once the paired comparison lands;
+- under `gate.fail_on: violation` head must pass every pass/fail check outright: the decision is judged in every head trial where the check is eligible, whatever base did, so proof (2) is dropped. A relative check has no outright pass, so it stays on proof (3). Eligibility is still compared as above: losing it is a regression, not a violation, and never having it is still not exercised;
+- under adaptive trials, a check not yet eligible on either side leaves its scenario undecided, so pairs are added while the budget lasts; it is not exercised only once the budget is spent. More trials can't fix *no baseline* or *new check failing*, so pairs stop being added for that check once the minimum number of pairs shows it;
 - the landed check (§6.6) and eligibility are independent: a trial whose fault didn't land still counts toward a check's eligibility, and the scenario is not exercised for the fault either way.
 
 **Placement.** A top-level check runs in every scenario, so a top-level check with a `requires:` that some scenario's traffic can't meet is not exercised there by design. Put such checks in the `checks:` of the scenarios whose traffic meets them, and at the top level only when every scenario's traffic does. Downgrading a whole scenario to `warn` instead would also downgrade its landed check.
 
-**Switches.** `not_exercised: warn` exists at three levels, the most specific winning: on the check entry (any kind), then the scenario, then `gate.not_exercised`. The check-level switch covers every not-exercised result of that check, a `recovers:` window cut short included; a candidate regression on eligibility counts is a regression, so `gate.fail_on` and `flaky` govern it like any other. Check results roll up to the scenario: REGRESSED if any check regressed; otherwise not exercised if any check or fault was not exercised at `fail` severity; otherwise pass. Underpowered, flaky and no-data results are reported per check beside the roll-up, under their own switches.
+**Switches.** `not_exercised: warn` exists at three levels, the most specific winning: on the check entry (any kind), then the scenario, then `gate.not_exercised`. The check-level switch covers every not-exercised result of that check, a `recovers:` window cut short included; a candidate regression on eligibility counts is a regression, so `gate.fail_on` governs it like any other. `underpowered: warn` exists at two levels, the more specific winning: the scenario, then `gate.underpowered` (default `fail`); there is no per-check switch. It covers underpowered and no-baseline results, for the decision and the eligibility comparison alike.
+
+**Roll-up.** A scenario provably ran when every configured fault landed and its trial pairs are complete: each pair has a base trial and a head trial that Kazu ran to the end. A trial Kazu itself failed to run (the driver errored, an image pull failed midway, the runner was lost) fails the scenario as ***trial incomplete***; it says nothing about the system, has no switch of its own, and the way forward is to run again. A scenario fails if any result is at `fail` severity: REGRESSED, fails on head, fails intermittently on head, new check failing, not exercised, no data, underpowered, no baseline, a check error, incompatible with base where head didn't pass, or trial incomplete. Every such result is listed. A result at `fail` severity is printed on a `✗` line; one downgraded to `warn` is printed on a `⚠` line and doesn't fail the scenario. No third outcome leaves a scenario green by default.
+
+**`blocking: false`.** A scenario may carry `blocking: false` (the default is `true`). It still runs, and every result is computed and reported as usual, but it never fails the gate: the run's exit status and the status check ignore it. A run fails if a blocking scenario fails, or if the run itself failed (a config error, a planner rejection, a missing shard); a run with no blocking scenario says so in its output. Every output marks a non-blocking scenario (§4.8). It is the way forward when a scenario fails for a reason the PR can't fix, mainly flakiness already on main, and the one switch for results with none of their own: a mixed result on head, new check failing, trial incomplete and a check error. It waives the whole scenario, whatever the severities of its results; the scenario's `not_exercised: warn` and `underpowered: warn` stay as the finer switches, each downgrading one kind of result while a regression in the same scenario still blocks. Leaving a scenario out of a run altogether stays a `suites:` choice.
 #### The checks image
 
 For anything that needs code. Two decorators, both relative to traffic exiting:
@@ -599,17 +619,19 @@ Runners and output sinks are flags, not config: the CI templates written by `kaz
 ```
 kazu run  ·  suite pr  ·  base main@9c41e2 vs head a1f3c9  ·  adaptive trials
  
-  slow-payments              ✓ pass       p99 612ms → 640ms (+4%, within 20%)
-  stripe-errors              ✗ REGRESSED  no_double_charge  0/5 → 4/5 trials failing
-  db-blip                    ✓ pass       recovers in 11s → 9s
-  double-click               ✗ REGRESSED  default: unexpected crash  payments exited with SIGSEGV in 3/5 trials
+  slow-payments              ✓ pass       p99 612ms → 640ms (+4%, within 20%)  ·  proxy forwarding p99: base 40µs, head 42µs
+  stripe-errors              ✗ REGRESSED  no_double_charge  0/5 → 4/5 trials failing  ·  proxy forwarding p99: base 38µs, head 2.1ms ▲
+  db-blip                    ✓ pass       recovers in 11s → 9s  ·  proxy forwarding p99: base 41µs, head 39µs
+  double-click               ✗ REGRESSED  default: unexpected crash  payments exited with SIGSEGV in 3/5 trials  ·  proxy forwarding p99: base 37µs, head 40µs
  
   ✗ stripe-errors: 3 orders charged more than once, e.g. [o_81, o_93, o_97]
     changed since base: payments (a1f3c9 "retry stripe call on 503")
     reproduce: kazu replay r_2fj9 --trial 2
 ```
 
-A fault that never landed, a check whose `requires:` was never met, a metric with no data, or a comparison too noisy to decide looks like this:
+Every scenario line shows **proxy forwarding p99** for base and for head ([ADR-0012](docs/adr/0012-build-our-own-proxy-and-measure-its-overhead.md); §6.8): the largest forwarding-overhead p99 among the scenario's edges and trials on that side, over chunks, not requests. With no samples it reads "no data", never 0. It is a maximum over trials, so it grows with the trial count and is not comparable between runs with different trial counts. A `▲` after a number marks a figure above the display threshold (1 ms p99 is ADR-0012's recommendation, for forwarding overhead and accept lag alike); when accept lag is the one over the threshold, the line names it. The marker is an informational heuristic: it never starts a line, is not a result, and changes no result and no exit code.
+
+Every result that fails a scenario is listed on a `✗` line. A fault that never landed, a check whose `requires:` was never met, a metric with no data, a comparison too noisy to decide, a relative check with no baseline, a new check failing, or a check that fails on head while base is mixed looks like this:
 
 ```
   ✗ slow-payments: fault on checkout -> payments was not exercised
@@ -618,11 +640,35 @@ A fault that never landed, a check whose `requires:` was never met, a metric wit
     requires: "select 1 from charges limit 1" on postgres returned no rows in any of 5 base and 5 head trials; check that traffic creates charges
   ✗ db-blip: metric "payment attempts per order" has no data
     no samples for payment_attempts_total; check the service's OTLP exporter (kazu doctor)
-  ⚠ db-blip: latency within 1% is underpowered
-    this run's noise on checkout p99 is ±14% after 12 trial pairs; widen the tolerance or use a quieter runner
+  ✗ db-blip: latency within 1% is underpowered
+    this run's noise on checkout p99 is ±14% after 12 trial pairs; widen the tolerance, allow more trials or use a quieter runner
+    to stop this blocking: underpowered: warn on the scenario
+  ✗ new-export: payments_p99 within 10% has no baseline on base
+    this path is new in head; use an absolute check (slo:, sql:, http:) until it's on main
+  ✗ new-export: new check failing: export_complete fails on head (5/5 trials) and was never eligible on base
+    nothing on base to compare with; fix the code or the check, both are in this PR
+  ✗ double-click: no_double_charge fails intermittently on head (2/10 trials; base 1/10)
+    to stop this blocking: fix the flake, remove the check from kazu.yaml (or defaults.off for a built-in), or set blocking: false on the scenario
+  ✗ soak: orders_settle fails on head (10/10 trials; base 3/10)
+    to stop this blocking: fix the flake, remove the check from kazu.yaml (or defaults.off for a built-in), or set blocking: false on the scenario
 ```
 
-PR comment: same content, condensed, with a pass/fail status check.
+A result downgraded to `warn` by its switch is printed on a `⚠` line and doesn't fail the scenario. So underpowered is `✗` by default and `⚠` only where a switch downgraded it:
+
+```
+  ⚠ rare-errors: fault on payments -> fraud was not exercised (not_exercised: warn)
+    the fault drew no request; 1% errors on 240 requests
+```
+
+A scenario with `blocking: false` is marked on its line and never fails the gate (§4.6); a run with no blocking scenario says so:
+
+```
+  double-click  (non-blocking)   ✗ no_double_charge fails intermittently on head (2/10 trials; base 1/10)
+
+  no scenario in this run is blocking; it cannot fail the gate
+```
+
+PR comment: same content, condensed, with a pass/fail status check. Every other output (`--json` and the run record, JUnit, Markdown, the PR comment and the status check) carries the non-blocking marker and the result names above.
  
 ---
 
@@ -659,7 +705,7 @@ Systems that are not containerized, or that depend on externally managed state (
 │ ├─ Telemetry ─────── OTLP receiver + proxy counters → in-memory metric store per trial; PromQL engine   │
 │ ├─ Check host ────── default checks; checks container over stdio JSON-RPC; sql/http/metrics callbacks  │
 │ ├─ Verdict engine ── per-scenario statistical base-vs-head comparison with per-run noise estimates;     │
-│ │                    flake and underpowered results                                                     │
+│ │                    underpowered results                                                               │
 │ └─ Output sinks ──── stdout, JUnit, Markdown, JSON run record, OTLP, S3, webhook, cloud                  │
 │        │ gRPC                    │ Docker API / Kubernetes API         ▲ OTLP                           │
 │ ┌──────▼─────────── system under test (fresh per trial, sealed) ──────┼──────┐                           │
@@ -684,7 +730,7 @@ Systems that are not containerized, or that depend on externally managed state (
 - **Trial pairs are the unit of work.** One base trial and one head trial of the same scenario and seed, back to back on the same machine, so runner noise hits both equally. Workers lease pairs; an expired lease puts the pair back in the queue. The spread of differences across pairs is also each run's own noise estimate.
 - **Every image is pinned once per run, for replay.** Before the first trial, every image is resolved to a digest (traffic, checks, and each system service on both base and head) and the mounted files are hashed. The same traffic and checks pins serve base and head, so only the system differs between the two. The run record is the plan (with those pins and the resolved base and head variables) plus the results (including each trial's metrics), which is exactly what replay needs. Every selected scenario runs on every run, base and head; Kazu never skips one as unchanged ([ADR-0010](docs/adr/0010-every-scenario-runs-on-every-run.md)).
 - **Kazu knows which crashes are its own.** The controller records every process fault it injects, so the default crash and exit checks can tell an injected `crash` from a real one.
-- **No verdict on a fault that didn't land, on a metric with no data, or on a comparison too noisy to decide** (§4.6, §6.6, §6.8).
+- **A fault that didn't land, a metric with no data and a comparison too noisy to decide each have a verdict: they fail by default** (§4.6, §6.6, §6.8).
 - **The CLI is complete without the backend.** Baselines can live in CI artifacts. If the control plane is down, runs fall back to the customer's runners and still gate.
 ### 6.2 Runners (bring your own)
 Any machine that can run `kazu worker` is a runner.
@@ -697,10 +743,10 @@ Any machine that can run `kazu worker` is a runner.
 - Seeded fault schedules; logical (request-count) triggers preferred; per-edge seeded PRNG.
 - The seed fixes the fault plan, not system behaviour. Remaining nondeterminism (scheduling, timing, noise) is handled with repeated trials and statistics.
 - **Noise is estimated per run, per scenario, per measurement**, from the head−base differences across that run's trial pairs. There is no global noise baseline; services, endpoints, commits and runners each flap differently.
-- Adaptive trial counts: stop early when clearly passing or clearly regressed; add pairs while undecided, up to a budget. History from earlier runs of the same scenario may set the starting count, never the verdict.
-- Per-scenario comparison of failure counts, latency distributions and metric values, with false-discovery control across many scenarios and checks.
-- If the budget runs out before the test can decide, the result is **underpowered**, with this run's measured noise and what would resolve it.
-- Flaky scenarios are classified and reported as flaky, not as regressions.
+- Adaptive trial counts: stop early when clearly passing or clearly regressed; add pairs while undecided, up to a budget. A pass/fail check is never undecided, so trials stop at the minimum number of pairs unless a relative measure or an eligibility count in the scenario is still undecided. History from earlier runs of the same scenario may set the starting count, never the verdict.
+- Per-scenario comparison of latency distributions and metric values, with false-discovery control across many scenarios and checks.
+- If the budget runs out before the test can decide, the result is **underpowered**, with this run's measured noise and what would resolve it. It fails by default (§4.6).
+- A pass/fail check that fails in any head trial fails, unless base failed in every trial. Kazu doesn't compare failure rates and doesn't accommodate flake (§4.6).
 ### 6.4 Scale
 
 **CI wall time is the constraint** (target: PR gate in about 10 minutes). With fresh environments at roughly 100 s per trial run:
@@ -714,7 +760,7 @@ Any machine that can run `kazu worker` is a runner.
 
 On K3s, one cluster per runner is reused across trials with a fresh namespace per trial, so cluster boot is paid once per runner, not per trial.
 
-Other limits: the system under test must fit on one runner (bigger systems: stubs or bigger self-hosted runners). Proxy overhead is sub-millisecond and paid equally by base and head. Per-trial metric stores are small (one trial's series for minutes) and discarded after the run record is written. The backend stores KB–MB per run and is not a scaling risk.
+Other limits: the system under test must fit on one runner (bigger systems: stubs or bigger self-hosted runners). Proxy overhead is measured and reported on every run ([ADR-0012](docs/adr/0012-build-our-own-proxy-and-measure-its-overhead.md)): the proxy's own processing, as forwarding overhead per chunk and accept lag per connection (§6.8). Not measured: anything before a read returns, the wait in the kernel's accept queue, the upstream dial, the extra hop itself (paid alike by base and head, and tracked by Kazu's own bench job), and a proxy waiting for a CPU. Per-trial metric stores are small (one trial's series for minutes) and discarded after the run record is written. The backend stores KB–MB per run and is not a scaling risk.
 
 ### 6.5 Tech stack
 
@@ -793,6 +839,8 @@ Two sources, one store, one query language.
 
 **Proxy metrics (no setup).** Every proxy records, per declared edge: requests, errors (HTTP status classes, gRPC codes), latency histograms for `http`/`grpc` edges, and connections and bytes for `tcp` edges. Declaring an edge from traffic (`traffic -> checkout: http`) without faulting it gives user-facing latency and error rate, measured identically in base and head; the default regression checks read these edges. `slo:`, `no_regression:` and `recovers:` on a service read the service's declared inbound edges.
 
+Every proxy also records two measures of what it added itself, per edge and per trial, on base and on head, each as a histogram with a count (p50, p99, max). **Forwarding overhead**, per chunk and per direction: the time from the chunk being free to go (the latest of its read returning, the time the fault program meant to release it, and the previous write in that direction returning) to the proxy issuing its write. **Accept lag**, per connection: from `Accept` returning to the connection being admitted to the fault program. They go into the per-trial store with the other proxy counters and are reported on every run (§4.8, `--json` and the run record). They change no result and no default check reads them; a user's `metric:` check may.
+
 **The system's own OpenTelemetry metrics.** Kazu runs an OTLP receiver (gRPC and HTTP) inside the sealed system and points services at it, using the same spec-editing approach as routing:
 - by default, it sets the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var on every service, which every OpenTelemetry SDK honours;
 - if the system already has a collector service, `telemetry.collector` names it and Kazu aliases that name to its receiver with the same hosts-file mechanism.
@@ -817,8 +865,8 @@ Traces come later: the same receiver can accept spans, enabling checks like "eac
 | AI: incident → scenario, PR coverage review, suggested invariants | | ✅ metered | ✅ |
 | **Consumer resilience contracts** (provider PRs run consumers' invariants) | | ✅ | ✅ |
 | Org registry of standard suites | | basic | full |
-| Policy-as-code for gates; waivers with expiry and audit | | basic | full |
-| Org-wide flake quarantine, ownership routing, coverage map | | ✅ | ✅ |
+| Policy-as-code for gates | | basic | full |
+| Ownership routing, coverage map | | ✅ | ✅ |
 | Hosted lanes with snapshot boot | | metered add-on | committed spend |
 | SSO/SCIM, RBAC, audit export, self-hosted control plane, SLA | | | ✅ |
 
@@ -849,7 +897,7 @@ Kazu is a CI gate, so it is gated the same way, on every Kazu PR, by running as 
 
 1. The PR builds the `kazu` binary and the SDK images.
 2. A GitHub Actions workflow identical to the one `kazu init --ci github` writes for customers runs those builds against the shop: same commands (the Action from step 3), same `kazu.yaml`, same JUnit and Markdown outputs.
-3. A small Go asserter, deliberately not Kazu, compares each row's JSON result with the shop's `expectations.yaml`: verdict, which check caught it, *not exercised*, *no data*, *incompatible with base*. Any mismatch blocks the merge.
+3. A small Go asserter, deliberately not Kazu, compares each row's JSON result with the shop's `expectations.yaml`: verdict, which check caught it, *not exercised*, *no data*, *incompatible with base*, *underpowered*, *no baseline*, *new check failing*, *fails on head*, *fails intermittently on head*, *trial incomplete*, and the non-blocking marker. Any mismatch blocks the merge.
    **Shop rules.**
 - Every bug flag must pass the shop's own test suite, so it is a bug ordinary tests miss.
 - Predicted misses are recorded and asserted like any other outcome; a miss is fixed only by a generic Kazu improvement, never by a shop-specific check.
@@ -859,10 +907,10 @@ The shop's bug flags are known, planted bugs, so this tests Kazu in both directi
 
 Keeping it fast and reliable:
 - **Sharded** across about 10 jobs with Kazu's own static shards, targeting the same ~10-minute budget as a customer's PR gate.
-- **No flaky rows.** Statistical rows are made decisive for gating: a race probability high enough that detection is near certain, and "flaky, not regressed" asserted with a margin wide enough that a false failure is rarer than about 1 in 1000. The 20-repeat false-positive row runs as 20 shards.
+- **No flaky rows.** Statistical rows are made decisive for gating: a race probability at which the row's expected result is near certain, so that a false failure is rarer than about 1 in 1000. The 20-repeat false-positive row runs as 20 shards.
 - **K3s rows** gate PRs if the K3s spike shows GitHub-hosted runners can run K3s; otherwise they need a self-hosted runner, a cost to decide then.
   **Spikes**
-- Before step 3: validate the verdict *method*, not a noise number. On the shop's race flag and on repeated unchanged baselines across different services and runners, choose the statistical test (for example a paired bootstrap on the ratio of quantiles), the minimum number of trial pairs and the trial budget, and confirm the per-run noise estimate keeps false positives at the target rate. Set the default checks' tolerances as policy.
+- Before step 3: validate the verdict *method*, not a noise number. On the shop's race flag and on repeated unchanged baselines across different services and runners, choose the statistical test (for example a paired bootstrap on the ratio of quantiles), the minimum number of trial pairs and the trial budget, and confirm the per-run noise estimate keeps false failures at the target rate: underpowered results on unchanged baselines count, per measure, not only a false REGRESSED. Two inputs: a pass/fail check is never undecided, so trials stop at the minimum unless a relative measure or an eligibility count is still undecided; and the trial count pulls two ways, since more trials catch a rare regression more often and make relative checks underpowered less often, but also make a flake already on main block more often. Set the default checks' tolerances as policy.
 - Before step 4: K3s on a hosted CI runner (boot time, memory, whether the runner allows the privileges K3s-in-Docker needs).
 - Before step 7: VM snapshot/restore pitfalls (clocks, randomness, open connections).
   **Size guess** (pre-repo, assuming a human writing the code and learning Go): 10–14 weekends for steps 1–3, a similar amount for 4–5, and 4–6 for step 6. Steps 3 and 5 are where estimates slip.
@@ -872,11 +920,11 @@ Keeping it fast and reliable:
 ## 9. Risks
 
 1. **Packaging the customer's system** — the biggest adoption barrier. Requiring a complete, sealed system is the same bar Antithesis sets; mitigations are `doctor`, mocks, templates, and the fact that most compose files used for local development are already close.
-2. **Flaky verdicts** — if the gate cries wolf, it gets disabled. Latency checks are the most exposed; mitigations are relative comparisons on trial pairs, per-run noise estimates, the underpowered result, and validating the method in the step-3 spike.
+2. **Flaky verdicts** — if the gate cries wolf, it gets disabled. Latency checks are the most exposed, because a comparison too noisy to decide fails by default; flakiness already on main fails too, on every PR whose head run hits it. Mitigations are relative comparisons on trial pairs, per-run noise estimates, adaptive trials, the scenario overrides (`underpowered: warn`, `blocking: false`), a message that names the fix, and validating the method in the step-3 spike.
 3. **Faults that don't land, metrics that don't arrive** — a caller using an IP bypasses the alias; a disabled exporter sends nothing. Mitigation: the landed and no-data checks turn both into clear errors instead of false passes.
 4. **Check authoring** — contracts only work if teams write checks; default checks, templates, metric checks over telemetry they already have, and AI suggestions matter.
 5. **Org purchase cycles** — paid value depends on cross-team adoption, which is slow for a solo vendor.
-6. **HTTP/2, gRPC streaming and long-lived connections** in the proxy. The proxy is a separate process behind a gRPC interface, so it can be rewritten in Rust later if this becomes a bottleneck.
+6. **HTTP/2, gRPC streaming and long-lived connections** in the proxy. The proxy is a separate process behind a gRPC interface, so it can be rewritten in Rust later if this becomes a bottleneck, or Envoy reconsidered for the gRPC mode if `x/net/http2` doesn't cover its edge cases (ADR-0012).
 7. **Incumbents** (Gremlin into CI gating, Antithesis downmarket) — possible, not imminent.
    **Leading indicators:** dogfooding finds a real bug; three outside teams reach a verdict without help; someone asks for cross-team features unprompted.
 
@@ -907,7 +955,7 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | No protocol sniffing | Sniffing misreads TLS, SSL-request openings, PROXY headers and server-speaks-first protocols; a false error would block customers. Wrong protocols surface through the landed check instead |
 | A fault that never landed fails the scenario by default, with a config override | A silent false pass is the worst outcome for a gate; the override keeps anyone from being blocked |
 | Default checks modelled on Antithesis's default properties, plus regression defaults on user-facing edges | Teams get a verdict before writing any invariant; crashes and unexpected exits are facts any system should fail on; the regression defaults are where Kazu's base vs head adds value |
-| `no_regression`: user-chosen tolerance; noise estimated in every run, per scenario and per measurement, from the trial pairs; too noisy to decide is "underpowered", a warning | Flapping differs by service, endpoint, commit and runner, so a global noise baseline is meaningless. The tolerance is the user's; whether this run can resolve it is a measurement. Guessing either way would break "fail only on facts" |
+| `no_regression`: user-chosen tolerance; noise estimated in every run, per scenario and per measurement, from the trial pairs; too noisy to decide is "underpowered", a warning | Flapping differs by service, endpoint, commit and runner, so a global noise baseline is meaningless. The tolerance is the user's; whether this run can resolve it is a measurement. Guessing either way would break "fail only on facts". *Superseded in part by ADR-0013: underpowered fails by default, with a scenario override* |
 | Telemetry as evidence: proxy metrics plus the system's own OpenTelemetry metrics, one per-trial store, PromQL | Answers "why not unit or integration tests?": catches system-level failures that leave data correct. Reuses telemetry teams already emit and a query language they already know; Prometheus's engine is an embeddable Go library |
 | OTLP wired in with the standard env var or a collector alias | No code changes for instrumented services; same spec-editing approach as routing |
 | Latency checks relative to base by default | Shared CI runners are noisy; base and head trial pairs on the same machine make relative checks stable where absolute thresholds flap |
@@ -925,7 +973,7 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | Kazu computes `KAZU_DURATION` per scenario | Nobody hand-calculates fault plus recovery time; a too-short load was the most likely setup mistake. *Superseded by ADR-0006: the traffic decides how long it runs (the template defaults to 120 s), Kazu caps a trial at 30 min, and too short is reported as not exercised* |
 | No traffic recording and no observability-driven traffic | YAGNI: the template covers simple cases and existing k6 scripts cover the rest; observability data has the shape of traffic but not the payloads, and would pull production data into CI |
 | Base and head chosen by variables the system file interpolates; images pulled, never built | Works with any tagging scheme and keeps builds out of Kazu; CI already publishes images per commit. Git refs (Kazu builds both) and per-service image maps were the alternatives |
-| Head's traffic and checks run against both base and head | A PR can't weaken a check to hide its own regression, and load changes can't look like regressions. A check that errors on base is reported as incompatible, not as a verdict |
+| Head's traffic and checks run against both base and head | A PR can't weaken a check to hide its own regression, and load changes can't look like regressions. A check that errors on base is reported as incompatible, not as a verdict. *Superseded in part by ADR-0013: it is judged on head* |
 | No executable-check tier | Checks are an image; a shell script would need its own image anyway. SDK images and one-line checks cover it |
 | Request-count triggers only on HTTP/gRPC edges | A TCP proxy sees bytes, not requests; counting connections is meaningless with pooling, and parsing database protocols isn't worth it yet |
 | Auto scenarios (crash each service, take each edge down), opt-in | A zero-effort regression question using only default checks; opt-in because they multiply CI time. A small step towards Antithesis's autonomous faulting |
@@ -945,7 +993,7 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | No licence threshold on the runtime | Solo open-core evidence (Sidekiq) favours paid features over licence enforcement; relicensing backlash is real |
 | Paid = hosting, AI, org coordination | Costs us money or is bought by the organization, not the individual |
 | Umbrella: Zugzwang; product: Kazu | Zugzwang matches the existing GitHub org (zugzwang-io) and can hold unrelated projects; Kazu is short, snappy and free on npm and crates.io. tesseracanvas.com stays with the canvas project |
-| Go for the binary, not Rust | Learnable in weeks rather than months for a newcomer to both; compose-go and the official Docker/Kubernetes clients address the top adoption risk; Rust's speed edge cancels out because base and head pay the same proxy overhead |
+| Go for the binary, not Rust | Learnable in weeks rather than months for a newcomer to both; compose-go and the official Docker/Kubernetes clients address the top adoption risk; Rust's speed edge cancels out because base and head pay the same proxy overhead. *Assumption replaced by a per-run measurement: ADR-0012* |
 | Go for the control plane, not Kotlin (Spring or Ktor) | Shares trial-pair leasing, run records and plan hashes with the binary instead of reimplementing them; one toolchain for a solo builder. Spring rejected outright (annotation/DI magic, enterprise strengths we buy from WorkOS). *Plan hashes dropped by ADR-0010* |
 | One Protobuf schema for every protocol | Types generated for every SDK language and for Go/TypeScript clients; no hand-maintained duplicate types |
 | Docker Engine API, not Docker Desktop | Engine, CLI and Compose are Apache 2.0; Desktop's paid terms are the customer's concern, and the API also covers Podman, OrbStack and Colima |

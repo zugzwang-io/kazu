@@ -3,6 +3,16 @@
 Date: 2026-11-09
 Status: Accepted (2026-11-10)
 
+**Amended by [ADR-0013](0013-a-check-passes-only-if-head-is-verifiably-no-worse-than-base.md) (2026-11-27)**, in parts of rules 5 and 7. The text below is as accepted; where the two differ, ADR-0013 holds:
+- **Rule 5, "Eligible on head but never on base", with its accepted gap:** superseded. A pass/fail check that head passed passes; one that head failed fails as *new check failing*, so the gap closes; a relative check there is *no baseline*.
+- **Rule 5, the one-pair line "eligible on head but not on base passes":** becomes "judged by the rule": head passing passes, head failing fails. The other three one-pair lines stand.
+- **Rule 5, the adaptive-trials bullet:** gains an early stop: pairs stop being added for a check once the minimum number of pairs shows *no baseline* or *new check failing*.
+- **Rule 5, "The decision is compared over the pairs in which both sides were eligible. Too few such pairs to decide is underpowered":** holds only for relative checks. A pass/fail check that fails in any head trial fails, unless base failed in every trial, and is never underpowered.
+- **Rule 5's "so `flaky` and `underpowered` apply" and rule 7's "`gate.fail_on` and `flaky` govern it":** `flaky` and `gate.flaky` are removed. An undecided eligibility comparison is underpowered.
+- **Rule 7's roll-up sentence:** superseded. A scenario fails if any result is at `fail` severity, and underpowered fails by default.
+- **Under "Superseded from ADR-0009", "not a regression on eligibility, with an underpowered decision":** the second half no longer holds.
+- **What stands in rule 5:** never eligible on either side is *not exercised*; eligibility lost on head is judged on the eligible-trial counts; the two comparisons are independent; the `fail_on: violation` bullet; and the landed check's independence from eligibility. ADR-0013 adds that the eligibility comparison has to hold whatever the decision says.
+
 ## Context
 
 ADR-0009 (accepted 2026-10-29) answered a real gap: a check can pass because nothing happened. A `sql:` check selects violations and passes on no rows, so "no order charged twice" passes when no charges were made at all. ADR-0009's answer was a separate check kind, `sometimes`, whose failure on both sides made the scenario *not exercised*.
