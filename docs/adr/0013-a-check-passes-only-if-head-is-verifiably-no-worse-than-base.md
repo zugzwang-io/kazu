@@ -30,7 +30,7 @@ The question came up in the review of ADR-0012 (#64), which leans on "fail only 
 
 > **A check passes if Kazu can verify that head is no worse than base; otherwise it fails** (by default; overridable).
 >
-> **A scenario passes if and only if it provably ran and every check passes.**
+> **A scenario passes if and only if it provably ran and every check passes** (by default; a result can be downgraded to a warning).
 
 **An unknown is always resolved against head.** Head is what is under test, so wherever Kazu lacks a fact, it takes the reading that is worse for head. Every case below follows from the rule and this principle.
 
@@ -44,7 +44,7 @@ The rule applies from Phase 3's one-pair verdict onward. With one pair, each sid
 2. **Base failed the check**, whatever head did.
 3. **Both sides were measured, and the comparison says head is within tolerance.** This is how the relative checks work: `no_regression`, a `metric` with `within:`, and the regression defaults.
 
-If none of the three can be shown, the check fails. The rule doesn't branch on the kind of check; a kind differs only in which proofs it can offer. A pass/fail check offers (1) and (2). A relative check offers only (3).
+If none of the three can be shown, the check fails. The rule doesn't branch on the kind of check; a kind differs only in which proofs it can offer. A pass/fail check offers (1) and (2) for its decision. A relative check offers only (3).
 
 ### 2. Eligibility and decision both have to hold
 
@@ -73,8 +73,8 @@ A trial is **incomplete** when Kazu itself failed to run it: the driver errored,
 
 A trial in which the check errored, or its metric had no data, is unverifiable for that trial.
 
-- **On head** it blocks proof (1). In a proof-(3) comparison it counts against head.
-- **On base** it blocks proof (2). In a proof-(3) comparison it is left out of base's side.
+- **On head** it blocks proof (1). In a relative check, a pair whose head measurement is missing counts against head, as a pair outside the tolerance.
+- **On base** it blocks proof (2). In a relative check, a pair whose base measurement is missing can't be compared and is left out, which leaves fewer pairs to decide with.
 
 Both choices resolve the unknown against head. The same holds for an absolute `metric` check (`max:` or `min:`) with no data in some trials.
 
@@ -100,14 +100,19 @@ Decided by the maintainer on 2026-11-27. With several trial pairs a side's resul
 
 So a pass/fail check that fails in some head trials fails, whatever base did, unless base failed in every trial. The maintainer's reasoning: no other kind of testing, integration or end to end, tries to accommodate flake, so Kazu doesn't invent a workaround for it.
 
-- **The `flaky` result and `gate.flaky` are removed.** A mixed result on head is a plain failure. When base passed in every trial it is REGRESSED, with the counts, as DESIGN §4.8 shows today (`0/5 → 4/5 trials failing`). When base was mixed too it reads:
+- **The `flaky` result and `gate.flaky` are removed.** A failure on head is a plain failure, and the result name says which case it is. These are result names in `--json` and the record, like *no baseline*:
+  - **REGRESSED:** base had no failing trial, and head failed in at least one. The counts are shown, as DESIGN §4.8 does today (`0/5 → 4/5 trials failing`). A base trial that errored is unknown, so it is read against head, as a pass: base passing in every trial it could be judged in, with some errored, and head failing once is REGRESSED.
+  - ***fails intermittently on head*:** base failed in some trials but not all, and head is mixed too.
+  - ***fails on head*:** base failed in some trials but not all, and head failed in every one.
 
   ```
     ✗ double-click: no_double_charge fails intermittently on head (2/10 trials; base 1/10)
+      to stop this blocking: fix the flake, remove the check from kazu.yaml (or defaults.off for a built-in), or set blocking: false on the scenario
   ```
 
-- **No per-result switch governs it.** As with a check error, the way forward is to fix the bug or the check. When the PR can't fix it, as with flakiness that is already on main, the scenario is waived with `blocking: false` (point 13) while the bug gets fixed.
-- **A pass by (1) is "passed in every trial that ran".** How many trials that takes to catch a rare failure is still a question of the trial budget, for the verdict-method spike.
+- **No per-result switch governs it. The way forward, finest first:** fix the flake; or remove the check from head's `kazu.yaml`, or switch a built-in off with `defaults.off`; and only then waive the scenario with `blocking: false` (point 13). The order matters because a top-level check or a correctness default runs in every scenario. A flake in one of those would need every scenario waived, which turns the gate off; removing that one check keeps the rest of the gate.
+- **A pass/fail check is never undecided.** After any number of trials it has passed or failed. So adaptive trials stop at the minimum number of pairs unless a relative measure or an eligibility count in the scenario is still undecided.
+- **A pass by (1) is "passed in every trial that ran".** The number of trials pulls two ways. With a per-trial failure rate *q*, the chance that a failure shows in *N* trials is 1 − (1 − *q*)^*N*. More trials catch a rare regression more often, and they also make a flake that is already on main block more often. More trials also make relative checks underpowered less often. The minimum number of pairs is set with all three in view, in the verdict-method spike.
 
 The alternative considered was to compare failure rates against a margin, passing with a *flaky* warning when head was shown no worse and failing as underpowered otherwise. It lost on the reasoning above. It would also have needed a non-inferiority margin on failure rates, and a rule for the edge between a base that fails 5 of 5 (proof 2) and one that fails 4 of 5.
 
@@ -116,7 +121,7 @@ The alternative considered was to compare failure rates against a margin, passin
 When base was never eligible and head was, there is nothing on base to compare with.
 
 - **A pass/fail check that head passed** passes by (1).
-- **A pass/fail check that head failed** fails, with the result ***new check failing***. It isn't REGRESSED, because base never did it.
+- **A pass/fail check that head failed** fails, with the result ***new check failing***. It isn't REGRESSED, because base never did it. It has no switch of its own; `blocking: false` waives the scenario (point 13). The way forward is the code or the check, and both are in the PR.
 - **A relative check** has no pass or fail of its own, so it can't use (1) or (2), and with no measurement on base it has no (3). It fails, with the result ***no baseline***:
 
   ```
@@ -153,14 +158,14 @@ gate:
 The rule decides pass or fail. The result names say why a check failed.
 
 - **Not exercised:** never eligible on either side. It fails, under the `not_exercised` switches.
-- **No data:** the trials without samples are unverifiable (point 5). A relative `metric` check with no data on base in any trial has no (3) and fails as *no data*, under `gate.no_data`.
+- **No data:** the trials without samples are unverifiable (point 5). A relative `metric` check with no data on base in every trial has no (3) and fails as *no data*, under `gate.no_data`.
 - **Check error:** the trials that errored are unverifiable (point 5). There is no switch for the result. The checks come from head's `kazu.yaml`, so the way forward for an error is the check itself, in the same PR, with `blocking: false` (point 13) behind it. Principle 5 holds: nobody is left blocked.
 - **Incompatible with base** (the check errors on base, DESIGN §4.1): base is unverifiable. A pass/fail check that head passed passes by (1), and the result is still labelled *incompatible with base*. If head didn't pass it, it fails. Today DESIGN reports it "not as a verdict"; under the rule it has one.
-- **REGRESSED** is base passing in every trial with head failing in any, a decided comparison that found head worse, or eligibility lost on head. Underpowered is never reported as REGRESSED: Kazu doesn't guess which way an undecided comparison would have gone.
+- **REGRESSED** is a pass/fail check that failed on head when base had no failing trial (point 7), a decided comparison that found head worse, or eligibility lost on head. Underpowered is never reported as REGRESSED: Kazu doesn't guess which way an undecided comparison would have gone.
 
 ### 11. The roll-up
 
-A scenario fails if any result is at `fail` severity: REGRESSED, fails intermittently on head, new check failing, not exercised, no data, underpowered, no baseline, a check error, incompatible with base where head didn't pass, or trial incomplete. Every such result is listed. A result downgraded to `warn` is printed as a warning and doesn't fail the scenario. So no third outcome leaves the scenario green by default.
+A scenario fails if any result is at `fail` severity: REGRESSED, fails on head, fails intermittently on head, new check failing, not exercised, no data, underpowered, no baseline, a check error, incompatible with base where head didn't pass, or trial incomplete. Every such result is listed. A result downgraded to `warn` is printed as a warning and doesn't fail the scenario. So no third outcome leaves the scenario green by default.
 
 This fixes an inconsistency DESIGN already has, apart from underpowered: §6.8 says no data "fails by default", while §4.6's roll-up sentence reaches "otherwise pass" without it.
 
@@ -181,8 +186,8 @@ Under `trials: auto` Kazu still adds pairs while a comparison is undecided, and 
 Decided by the maintainer on 2026-11-27. A scenario may carry `blocking: false`. The default is `blocking: true`.
 
 - **The scenario still runs**, and every result is computed and reported exactly as usual, REGRESSED and the other failures included.
-- **It never fails the gate.** The run's exit status and the status check ignore it: a run fails if and only if a blocking scenario fails.
-- **The output marks it**, so a reader sees that it was waived:
+- **It never fails the gate.** The run's exit status and the status check ignore it. A run fails if a blocking scenario fails, or if the run itself failed (a config error, a planner rejection, a missing shard). A run with no blocking scenario says so in its output.
+- **Every output marks it**, so a reader sees that it was waived: the terminal, `--json` and the run record, JUnit, Markdown, the PR comment and the status check. In the terminal:
 
   ```
     double-click  (non-blocking)   ✗ no_double_charge fails intermittently on head (2/10 trials; base 1/10)
@@ -201,7 +206,7 @@ scenarios:
 
 **Precedence.** `blocking: false` waives the whole scenario, whatever the severities of its results. The scenario's `not_exercised: warn` and `underpowered: warn` stay as the finer switches: each downgrades one kind of result while a regression in the same scenario still blocks. Leaving a scenario out of a run altogether stays a `suites:` choice.
 
-**Schema.** A scenario-level boolean `blocking`, joining the schema in Phase 5 with `gate`. The PR that adds it gets its PLAN bullet.
+**Schema and phases.** A scenario-level boolean, `scenarios.<name>.blocking`, joining the schema in Phase 5 with `gate`. The PR that adds it gets its PLAN bullet. The rule applies from Phase 3, so in Phases 3 and 4 the results with no switch of their own have no waiver either. That is acceptable before the v0.x launch at the end of Phase 5: until then the only user is Kazu's own gate on the shop.
 
 ### Alternatives considered
 
@@ -218,7 +223,6 @@ Checked against `antithesis.com/docs/properties_assertions/assertions/` and `/pr
 - **It has no counterpart to underpowered.** Antithesis doesn't compare measurements between two builds, and it runs deterministically (bugs are "perfectly reproducible"), so there is no per-run noise to resolve. Kazu's paired comparison is already a recorded deviation (DESIGN §6.7, the "Regression defaults" row), and underpowered is a result of it.
 - **It has no flaky result either.** An Always assertion is "disproved by a failing encounter": one counterexample fails it. Point 7 does the same with one failing head trial.
 - **Proof (2) is Kazu's own.** An Antithesis property that fails is failing, whatever an earlier run did. Passing because base failed too belongs to the base-versus-head deviation already in §6.7 (the "User-declared scenarios compared base vs head" row). It is not a new one.
-
 - **`blocking: false` is a setting of Kazu's gate.** The pages checked describe properties and their statuses, not which failures block a merge, so there is no Antithesis decision here to follow or depart from.
 
 **No new deviation.**
@@ -233,17 +237,21 @@ Checked against `antithesis.com/docs/properties_assertions/assertions/` and `/pr
 - **Rule 7's roll-up sentence:** superseded by point 11.
 - **The line under "Superseded from ADR-0009"** that describes the head-only case as "not a regression on eligibility, with an underpowered decision": the second half no longer holds.
 - **Rule 5's "so `flaky` and `underpowered` apply" and rule 7's "`gate.fail_on` and `flaky` govern it"**, both about the eligibility comparison: `flaky` goes (point 7). An undecided eligibility comparison is underpowered.
-- The rest of rule 5 stands. Point 2 adds that the eligibility comparison has to hold whatever the decision says.
+- **Rule 5, "The decision is compared over the pairs in which both sides were eligible. Too few such pairs to decide is underpowered":** now holds only for relative checks. A pass/fail check's decision follows point 7 and is never underpowered.
+- **What stands in rule 5:** never eligible on either side is *not exercised*; eligibility lost on head is judged on the eligible-trial counts; the two comparisons are independent; the `fail_on: violation` bullet; and the landed check's independence from eligibility. Point 2 adds that the eligibility comparison has to hold whatever the decision says.
 
 **Folded in on acceptance:**
-- **DESIGN §2 principle 5:** the rule, the three proofs and "an unknown is resolved against head"; underpowered joins the missing signals that are never a pass; for a check error, the way forward is the check itself; `blocking: false` is the switch every failure has.
+- **DESIGN §2 principle 5:** the rule, the three proofs and "an unknown is resolved against head"; underpowered joins the missing signals that are never a pass. The "every failure has a switch in the user's config" clause is rewritten: "Every failure has a way forward in the user's config: a severity switch, `blocking: false` on the scenario, or an edit to the check in head's `kazu.yaml` (fix it, remove it, or `defaults.off`). Results that say nothing about the system (*trial incomplete*) are fixed by running again."
 - **DESIGN §4.1:** *incompatible with base* gets its outcome (point 10).
 - **DESIGN §4.4:** `gate.underpowered: fail`, and a scenario in the reference carries `underpowered: warn`; `gate.flaky` is removed; one scenario carries `blocking: false` with a comment.
-- **DESIGN §4.6:** "Underpowered is a warning by default" becomes "fails by default"; in the Verdict list, the head-only bullet, the one-pair bullet and the adaptive-trials bullet (as amended above), and point 2; the Switches paragraph gains the two levels for `underpowered` and the roll-up of point 11; every mention of `flaky` goes, and point 7 takes its place; `blocking: false` and its precedence (point 13).
-- **DESIGN §4.8:** the underpowered line becomes a `✗` failure line, not `⚠`, with the switch named; the *no baseline*, *new check failing* and *fails intermittently on head* lines; the non-blocking marker.
+- **DESIGN §4.6:** "Underpowered is a warning by default" becomes "fails by default"; in the Verdict list, the head-only bullet, the one-pair bullet, the adaptive-trials bullet and the "decision is compared over the pairs … underpowered" bullet (all as amended above), and point 2; the Switches paragraph gains the two levels for `underpowered` and the roll-up of point 11; every mention of `flaky` goes, and point 7 takes its place; `blocking: false` and its precedence (point 13).
+- **DESIGN §4.8:** the underpowered line becomes a `✗` failure line, not `⚠`, with the switch named; the *no baseline*, *new check failing*, *fails on head* and *fails intermittently on head* lines, the last two naming the fix; the non-blocking marker, and the line for a run with no blocking scenario.
+- **Every other output:** `--json` and the run record, JUnit, Markdown, the PR comment and the status check carry the non-blocking marker and the new result names.
 - **DESIGN §6.1:** "No verdict on a fault that didn't land, on a metric with no data, or on a comparison too noisy to decide" contradicts the rule. Each of those now has a verdict: it fails by default.
-- **DESIGN §6.3:** the underpowered bullet says it fails by default. The "Flaky scenarios are classified and reported as flaky" bullet is replaced by point 7, and the comparison of failure counts goes.
-- **DESIGN §8:** the spike's false-failure target counts underpowered results on unchanged baselines, not only a false REGRESSED. The "No flaky rows" bullet loses its "flaky, not regressed" margin, since no row asserts flaky any more.
+- **DESIGN §6.3:** the underpowered bullet says it fails by default. The "Flaky scenarios are classified and reported as flaky" bullet is replaced by point 7, and the comparison of failure counts goes. The adaptive-trials bullet gains the stopping rule: a pass/fail check is never undecided, so trials stop at the minimum unless a relative measure or an eligibility count is still undecided.
+- **DESIGN §6 (the architecture diagram):** "flake and underpowered results" loses "flake".
+- **DESIGN §7:** the paid rows "Org-wide flake quarantine" and "waivers with expiry and audit" no longer fit as written. Recommendation for the maintainer: reword them as org-wide management of `blocking: false` waivers, with expiry and audit. The open-source waiver never expires; the paid one adds expiry and audit to it. That is a managed form of the same switch, not an exception to point 7.
+- **DESIGN §8:** the spike's false-failure target counts underpowered results on unchanged baselines, not only a false REGRESSED. The spike's inputs gain the stopping rule and the two-way pull of the trial count (point 7). The "No flaky rows" bullet loses its "flaky, not regressed" margin, since no row asserts flaky any more.
 - **DESIGN §9 risk 2:** "the underpowered result" stops being a mitigation for flaky verdicts, and there is no flaky classification to lean on. The mitigations become adaptive trials, the scenario override and the message that names the fix. The risk also gains flakiness already on main, which now fails.
 - **DESIGN §11:**
   - the "`no_regression`: … too noisy to decide is "underpowered", a warning" row gains an italic note, "*Superseded in part by ADR-0013: underpowered fails by default, with a scenario override*";
@@ -253,9 +261,10 @@ Checked against `antithesis.com/docs/properties_assertions/assertions/` and `/pr
 - **SPEC.md row S8:** "**underpowered**, not pass or fail" becomes a failing scenario whose result is underpowered, never `pass` and never `REGRESSED`.
 - **SPEC.md row S7:** an underpowered `no_regression` on an unchanged baseline counts as a miss against the row's target share, and the share is set with that in mind.
 - **SPEC.md row S9:** the expected result becomes `pass` for the check reading `currency`, labelled **incompatible with base**, because head passes it (proof 1). Its purpose becomes "a check that errors on base is judged on head".
-- **SPEC.md row S5** (`RACE_P=0.1` on both sides): "`flaky`, not regressed" becomes a failure, *fails intermittently on head*, unless base fails in every trial. Its purpose becomes "a check that fails in any head trial fails, even when base flakes too". The sentence under the table about S5's wide margin goes.
+- **SPEC.md row S5** (the race flag on both sides): the expected result becomes a failure, ***fails intermittently on head***. The row is made decisive, as DESIGN §8's "no flaky rows" asks: the race's rate is set so that a trial fails about half the time, and the row runs a fixed 14 pairs, so each side is mixed in all but about 1 run in 8,000. The exact rate is set in the Phase 5 shop-rows PR, with the flag's redesign that SPEC.md already calls for. Its purpose becomes "a check that fails in any head trial fails, even when base flakes too". The sentence under the table about S5's wide margin goes.
+- **SPEC.md row S6** (the race on head only): "REGRESSED given enough trials" no longer tests adaptive trials, because a pass/fail check is never undecided. The row's purpose, the statistical power of adaptive trials, moves to a relative check: a head made worse on a measure by more than the tolerance, REGRESSED once enough pairs are in. The row is redesigned in the Phase 5 shop-rows PR.
 - **PLAN.md Phase 3:** the "checks 4/4" bullet (incompatible with base has an outcome) and the verdict bullet (the head-only case, *new check failing*, check errors and *trial incomplete* under the rule).
-- **PLAN.md Phase 5:** the spike bullet (the budget now sets a failure rate), the "paired comparison … **underpowered**" bullet, the adaptive-trials bullet (the early stop), the "flaky classification; `gate.*` honoured end to end" bullet (no flaky classification and no `gate.flaky`; the scenario `underpowered` switch, *no baseline* and the roll-up), and the shop-rows bullets for S4–S6 and S7–S9. The v1 scope table's Verdict row loses "flaky".
+- **PLAN.md Phase 5:** the spike bullet (the budget now sets a failure rate), the "paired comparison … **underpowered**" bullet, the adaptive-trials bullet (the early stop), the "flaky classification; `gate.*` honoured end to end" bullet (no flaky classification and no `gate.flaky`; `scenarios.<name>.blocking` and the run outcome of point 13; the scenario `underpowered` switch, *no baseline* and the roll-up), and the shop-rows bullets for S4–S6 and S7–S9. The v1 scope table's Verdict row loses "flaky".
 - **Schema (Phase 5):** `underpowered` on a scenario and on `gate`, each `warn | fail`; a scenario boolean `blocking`; no `gate.flaky`.
 
 **What becomes easier:**
@@ -272,7 +281,7 @@ Checked against `antithesis.com/docs/properties_assertions/assertions/` and `/pr
 - **A small fixed `gate.trials` fails often.** With two or three pairs most measurement comparisons can't be decided.
 - **The scenario switch is coarse.** `underpowered: warn` downgrades every underpowered and no-baseline result in the scenario, not only the noisy comparison it was written for. The finer remedy is more trials for that one scenario. How trials are configured per scenario (for example `max_trials`) is an open decision in PLAN.md, taken with the spike.
 - **A relative check on a new path fails until the path is on main.** The user writes an absolute check for that PR, or sets the scenario to `warn`.
-- **Flakiness that is already on main blocks every PR.** A check that fails in 1 of 10 trials on both sides fails each PR whose head run hits it, and that PR's author didn't cause it. This is the "cries wolf" case of DESIGN §9 risk 2, accepted on purpose. The way through is `blocking: false` on that scenario while the flake gets fixed, and the cost is that the scenario's real regressions stop blocking for as long as the line stays.
+- **Flakiness that is already on main blocks every PR.** A check that fails in 1 of 10 trials on both sides fails each PR whose head run hits it, and that PR's author didn't cause it. This is the "cries wolf" case of DESIGN §9 risk 2, accepted on purpose. The way through is to fix the flake or remove the check, and failing that `blocking: false` on that scenario while the flake gets fixed. The cost of the waiver is that the scenario's real regressions stop blocking for as long as the line stays. A rerun can also turn such a failure green, so some teams will rerun instead of fixing or waiving.
 - **There is an edge between proofs (2) and none.** A base that fails 5 of 5 passes head whatever head did; a base that fails 4 of 5 fails a head that fails at all.
 - **Proof (2) still passes a head that errors when base failed in every trial.** Counting head's error as a failure changes nothing there: base failed, so head is no worse. `fail_on: violation` is the mode for a team that doesn't want it.
 - **Trial incomplete has no switch of its own.** An unreliable runner blocks until the run is repeated, or the scenario is set to `blocking: false`.

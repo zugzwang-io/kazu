@@ -97,7 +97,7 @@ Checks:
 
 Verdict and CLI:
 
-- [x] #66 ADR-0013 (Proposed): a check passes only if head is verifiably no worse than base (head passed every trial, base failed every trial, or a relative comparison within tolerance); a scenario passes only if it ran and every check passed; an unknown is resolved against head; applies from the one-pair verdict; amends ADR-0011's head-only case and roll-up
+- [x] #66 ADR-0013 (Proposed): a check passes only if head is verifiably no worse than base (head passed every trial, base failed every trial, or a relative comparison within tolerance); a scenario passes only if it ran and every check passed; an unknown is resolved against head; applies from the one-pair verdict; underpowered fails by default, with a scenario `underpowered: warn` override; `flaky` and `gate.flaky` are removed; a scenario `blocking: false` waiver; amends ADR-0011's verdict rules and roll-up
 - [ ] verdict: per scenario, a check that passes on base and fails on head is REGRESSED, a violation on both is a pass; terminal output (§4.8 layout, pass/REGRESSED/not exercised only); `--json` result with per-edge proxy counters and a defined result for a config error (S2 and S3 assert on them)
 - [ ] cli: `kazu run [scenario] [--suite] --base --head [--seed] [--json]` wired through config → plan → driver → controller → checks → verdict; one shop trial end to end
 
@@ -141,7 +141,6 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 
 Done when the shop's rows gate Kazu's PRs through the same GitHub Action a customer uses, and v0.x is public.
 
-- [x] #66 ADR-0013 (Proposed; the line is under Phase 3's verdict): underpowered fails by default, with a scenario `underpowered: warn` override; `flaky` and `gate.flaky` are removed
 - [ ] spike → ADR: the statistical method, validated on the shop's race flag and repeated baselines — test, minimum pairs, budget, default tolerances as policy (DESIGN §8 spike, §10)
   Input from the 2026-10-16 noise spike (branch `spike-noise`; 3 conditions × 20 runs, consecutive base/head pairs on one GitHub runner, no order bias): whole-run p99 with no fault differed by >20% in 1 of 10 identical pairs while p95 stayed within 0.7%, and the recovery window was the noisiest (p90 pair difference 109–507%); latency during a fault is stable (≤0.2%, set by timeouts); unpaid-order rate differed by ~1 pp overall and up to 4 pp during a fault; HTTP error rate stayed 0 throughout a payments outage, because checkout answers 202 pending. Starting points: p95 as the default latency measure, at least 3 pairs with the median of per-pair ratios, comparisons per fault window, an error tolerance wider than 0.5 pp and measured on failed outcomes rather than HTTP status
 - [ ] verdict: trial pairs — same seed, base and head back to back; fixed `gate.trials: N` (adds `gate` to the schema); pair results in the record
