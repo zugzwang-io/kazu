@@ -62,11 +62,13 @@ The hard parts are the Go standard library and `x/net`: `net` for TCP, and later
   - Every active fault stage needs the bytes in user space, so `splice` can only ever apply while no fault is active on the connection.
   - It conflicts with decision 3 even there: bytes that `splice` moves have no read time and no write time. The follow-up has to show how overhead is still measured, or it is dropped.
 
-### 3. Every proxy measures what it added on every run, and the run reports it
+### 3. Every run measures what the proxy added, and reports it
 
-Each proxy is one process on one edge. It takes three measures in every trial, on base and on head. The definitions below are for the `tcp` forwarder. The HTTP and gRPC modes define their own timing points in the PR that builds them (headers parsed to upstream written; upstream read to written to the client), under the same rules.
+**The numbers have no effect on any result.** Nothing is dropped, invalidated or failed because of them. They are shown so that "is it the framework?" can be answered from the run itself. Whether to gate on them is deferred (decision 5).
 
-**Forwarding overhead**, per chunk and per direction: the time from the chunk being free to go, to the proxy issuing its write.
+Each proxy is one process on one edge. It takes five measures in every trial, on base and on head.
+
+**Forwarding overhead**, per chunk and per direction: the time from the chunk being free to go, to the proxy issuing its write. This definition is for the `tcp` forwarder.
 - A chunk is free to go at the latest of three times: its read returned; the time the fault program meant to release it (a `latency` due time, the end of a `partition` hold, a `bandwidth` wait); and the previous write in that direction returned.
 - The third term matters because reads and writes are decoupled once `latency` queues chunks. Without it, a chunk waiting behind a write that is blocked on a slow receiver would count against the proxy. A receiver that isn't reading blocks a direct sender the same way, so that wait is the system's behaviour.
 - For the same reason the time the write itself blocks is left out.
@@ -74,9 +76,21 @@ Each proxy is one process on one edge. It takes three measures in every trial, o
 - An answer the proxy writes itself (`errors`) is timed from when the answer is ready, by the same rule.
 - A `latency` fault that releases a chunk 3 ms after it was due shows 3 ms of overhead.
 
-**Accept lag**, per connection: from `Accept` returning to the connection being admitted to forwarding, which is the point where the fault program first sees it. A `partition` that then holds the connection and defers the upstream dial, or a `down` that refuses it, acts after that point, so a deliberate hold is never counted.
+**Accept lag**, per connection: from `Accept` returning to the connection being admitted to the fault program, which is the point where the program first sees it.
+- A `partition` that then holds the connection and defers the upstream dial acts after that point, so a deliberate hold is never counted.
+- `down` refuses before `Accept`, so a refused connection produces no sample.
+- The upstream dial is not counted: its duration is mostly the callee's.
 
-**Scheduler latency**, per process: Go's own histogram of how long runnable goroutines waited to run (`runtime/metrics`, `/sched/latencies:seconds`), taken as the difference between a snapshot at the start of the trial and one at the end.
+**Go scheduler latency**, per process: Go's histogram of how long runnable goroutines waited to run (`runtime/metrics`, `/sched/latencies:seconds`), as the difference between a snapshot at the start of the trial and one at the end. Its caveats:
+- the runtime samples it, about 1 in 8 goroutine transitions;
+- it is a bucketed histogram, so p99 and max are bucket bounds, and the top bucket has no upper bound;
+- it covers every goroutine in the process, the control service and the garbage collector included, not only the forwarding path.
+
+**OS run delay**, per process: the time the proxy's threads spent runnable but waiting for a CPU, `run_delay` from `/proc/self/task/*/schedstat`, summed over threads, as a snapshot difference per trial.
+
+**CPU throttling**, per container: `nr_throttled` and `throttled_usec` from the cgroup v2 `cpu.stat`, as a snapshot difference per trial.
+
+The two OS measures are Linux-only, which is acceptable because runners are Linux. Where one can't be read (not Linux, cgroup v1, scheduler statistics disabled in the kernel), the result says "not available" for it, never zero.
 
 **What each measure sees, and what none of them sees:**
 
@@ -84,95 +98,65 @@ Each proxy is one process on one edge. It takes three measures in every trial, o
 |---|---|---|
 | Forwarding overhead | delay inside the proxy's pipeline after a read has returned: queueing between stages, timers firing late, a goroutine that wasn't run between read and write | anything before the read returns. On a connection with no fault active, read and write are back to back, so this stays near zero even on a starved runner |
 | Accept lag | a new connection waiting for its handler to start | the wait in the kernel's accept queue before `Accept` returns |
-| Scheduler latency | the proxy's goroutines waiting for a CPU, including the wake-up after data arrives, which happens before a read returns | a running thread the operating system has descheduled; kernel time |
-| None | | bytes waiting in socket buffers before the proxy reads; the extra hop itself (one more socket and one more copy) |
+| Go scheduler latency | goroutines waiting for one of Go's own scheduler slots, including the wake-up after data arrives, which happens before a read returns | the operating system's scheduling of the proxy's threads: run-queue delay, throttling, steal time |
+| OS run delay | the proxy's threads waiting in the kernel's run queue | which request or chunk paid for it; threads that exited between the snapshots |
+| CPU throttling | the proxy's container being stopped by its own CPU limit | a limit set on a parent cgroup |
+| None | | bytes waiting in socket buffers before the proxy reads; the extra hop itself (one more socket and one more copy); steal time, when the runner is a virtual machine whose host is overcommitted |
 
-So the three measures bound what the proxy's own user-space code and runtime added. They are evidence that the proxy wasn't the cause, not a proof that covers the kernel.
+So the five measures bound what the proxy's own code, its runtime and its share of the CPU added. They are evidence that the proxy wasn't the cause, not a proof that covers the kernel's network path.
 - The extra hop is the constant part (the +28µs per round trip above), paid alike by base and head and tracked by the bench job.
-- On Linux, `TCP_INFO` and the accept-queue depth could cover part of the kernel's share. That isn't built until the three measures prove insufficient.
-- The upstream dial is not counted as accept lag: its duration is mostly the callee's.
+- On Linux, `TCP_INFO` and the accept-queue depth could cover part of the kernel's network share. That isn't built until these measures prove insufficient.
 
-Each measure is kept as a histogram with a count, so a trial reports p50, p99 and max.
+The two timings and the Go histogram are kept as histograms with a count, so a trial reports p50, p99 and max. The two OS measures are totals per trial.
 
-**Reporting.** The numbers are read through the control service with the other counters and written to the run record, per edge, per trial, for base and head. The `--json` result always carries them. The result can then say, for example, "proxy added p99 40µs, max 2ms on `checkout -> payments`".
+**Cost.** Two clock reads per chunk, two per connection, a histogram update per chunk and per connection, and per trial two snapshots each of the Go histogram, the threads' `schedstat` files and `cpu.stat`. The histogram updates cost more than the clock reads. The bench job measures the instrumented proxy: the PR that adds the timing shows its cost as that PR's base-versus-head difference.
 
-**Fail on facts.** A trial is **saturated** when, on any edge, a measure exceeds a budget. A trial pair with a saturated side, or whose proxy measures differ between base and head by enough to matter, gives no verdict from its checks in either direction: not a pass, not a regression.
-- That covers every check in the pair, not only latency checks, because delay the proxy adds can change behaviour (a caller that times out and retries), not just a measured number.
-- The checks' results from such a pair are still reported for information, as ADR-0011 does for a check's decision in an ineligible trial.
-- What the scenario's result then is, is sub-question 2. Whatever it is, it has a config switch, like every failure.
+### 4. Where it is shown
 
-**Cost.** Two clock reads per chunk, two per connection, two snapshots of the scheduler histogram per trial, and a histogram update per chunk and per connection. The updates cost more than the clock reads. The bench job measures the instrumented proxy: the PR that adds the timing shows its cost as that PR's base-versus-head difference.
+- **Terminal and PR comment:** every scenario line shows the proxy's p99 for base and for head. The figure is the largest forwarding-overhead p99 among the scenario's edges and trials on that side, for example `proxy p99: base 40µs, head 42µs`.
+- **`--json` and the run record:** every number, per edge, per trial, for base and head. They are read through the control service with the other counters.
+- **A ⚠ marker** on a value above the display threshold (sub-question 1). When any of a scenario's five measures is marked, its line carries the marker and names the measure and the edge. The marker is an informational heuristic, which principle 5 allows to warn. It changes no result and no exit code.
+
+### 5. Gating is deferred to a later ADR
+
+Whether and how these numbers affect a result is not decided here. A later ADR decides it once real runs exist. It covers the budget, a *proxy saturated* result, comparing saturation counts between base and head, what to do when a scenario has only one pair, how it works under `gate.fail_on: violation`, and the switch. Two reasons to wait:
+- **Data first.** No trial on a customer-like runner has been measured, so any budget would be a guess, and a guessed gate fails people on noise.
+- **Dropping or invalidating pairs has selection-bias traps.** If head saturates the proxy in its worst trials, dropping those pairs leaves head's best ones, and the scenario can pass because of what was removed. Counting saturated trials on each side before dropping avoids that, but it needs enough pairs to compare, which a single pair doesn't give, and a base-versus-head comparison, which `fail_on: violation` doesn't make. The later ADR starts from these.
 
 ### Antithesis alignment
 
 Antithesis owns the whole environment from a hypervisor, so it has no proxy and no proxy-overhead question. Kazu's proxies per declared edge are already a recorded deviation (DESIGN §6.7, first row). This ADR adds **no new deviation**: building the proxy is how that deviation is carried out, and measuring its overhead is a cost of it. Antithesis has made no decision for either problem that Kazu could take instead.
 
-### Open sub-questions (the maintainer settles each)
+### Open sub-question (the maintainer settles it)
 
-**1. The budget: its default, and whether it is absolute, relative to base, or both.**
+**1. The ⚠ threshold.**
 
-Recommendation: an absolute budget now; the base-versus-head rule later, once there is data.
-- **Absolute, default p99 of 1 ms** per edge per trial, for each of the three measures, with max reported but not judged. "Measured overhead exceeded the configured budget" is a fact. 1 ms turns §6.4's "sub-millisecond" from a claim into a check, and it is about 35 times the +28µs per round trip of an idle proxy. The number is provisional: no trial on a customer-like runner has been measured yet.
-- **A minimum sample count.** With one pooled connection, accept lag's p99 is a single sample, which is its max. A measure is judged only above a minimum number of samples (to be set from the data, 100 as a starting point); below it the measure is reported and not judged.
-- **Not a ratio to base.** At tens of microseconds, 60µs against 30µs is double and means nothing, and a base that is itself saturated excuses nothing.
-- **The base-versus-head difference in the measures is reported from the start and gated later.** An absolute budget already bounds it: two values under 1 ms differ by less than 1 ms. A tighter rule only matters when a latency check's tolerance is finer than that, and "enough to matter" then depends on that tolerance, which makes it a judgement the verdict method has to define (DESIGN §10, spike before Phase 5). A share-of-tolerance rule is a heuristic in principle 5's sense, so it should warn until it can be stated as measured-against-configured.
-- **A report-only period first.** Until the default is confirmed, proxies report and nothing gates. The shop's runs on GitHub runners show what a normal trial looks like. They must include trials with a `latency` fault, where Go timers firing late will dominate forwarding overhead. The gate is switched on once that data confirms or changes the default: at the earliest with the Phase 3 verdict, at the latest with trial pairs in Phase 5.
-
-**2. What a saturated trial does to the scenario's result.**
-
-Recommendation: a new result, **proxy saturated**, with its own switch, following ADR-0011's rule for eligibility counts. Not *underpowered*, and not *not exercised*.
-
-Saturation is a measured fact about a trial, so it can't be dropped quietly. Dropping saturated pairs and judging the rest would also bias the verdict: if head saturates the proxy in its worst trials, the pairs that remain are head's best ones, and the scenario could pass. So saturated trials are counted before anything is dropped:
-
-- **Head saturated in more trials than base:** a candidate regression (head puts more through the edge than base did, on the same proxy, traffic and runner). It is judged by the base-versus-head comparison on the saturated-trial counts, as ADR-0011 judges eligible-trial counts, so `gate.fail_on` and `flaky` govern it like any other regression. The reason line names the edge, the counts and the per-edge request counts on each side.
-- **Saturated on both sides alike, or one transient pair:** when that comparison finds no difference between base and head, the saturated pairs are dropped and replaced within the trial budget, as adaptive trials already add pairs while undecided (DESIGN §6.3). The scenario's checks are then judged on the valid pairs.
-- **Still undecided when the budget runs out, or saturated in every pair:** the scenario's result is **proxy saturated**. It fails by default, as a missing signal does, with the reason: "proxy saturated on `checkout -> payments` in 4 of 6 pairs (head p99 3.1 ms, base p99 60µs); use a larger runner or less load".
-- **The roll-up** (DESIGN §4.6) gains it beside *not exercised*: REGRESSED if any check regressed or head saturated more than base; otherwise *not exercised* or *proxy saturated* if either is present at `fail` severity; otherwise pass.
-
-Alternatives:
-- **Reuse *underpowered*.** Lost. It warns by default, so a head that saturates the proxy in every pair would pass with a warning, and the selection bias above would be reported as noise. Sharing its switch would also force anyone who wants saturation to fail to fail on noise too.
-- **Reuse *not exercised*.** Lost. It means the fault or the check's precondition never happened, and its fixes (resolver, traffic, trigger) are the wrong advice here.
-
-**3. Where the switch lives.**
-
-Recommendation: `gate.proxy_saturated: fail | warn`, default `fail`, and one key for the budget, `gate.proxy_overhead: 1ms`.
-- Its own switch, for the reason above.
-- No per-scenario or per-edge override. Saturation is a property of the runner and the load, not of a check, so the three-level override that `not_exercised` has is not needed until someone asks.
-- `gate` is not in the published schema yet (it joins in Phase 5), so nothing changes in the schema now.
-
-**4. Is *underpowered* a pass? CLAUDE.md and DESIGN disagree.**
-
-- CLAUDE.md's working agreements say: "a missing signal — not exercised, no data, underpowered — is never a pass".
-- DESIGN says otherwise in three places. Principle 5 lists the missing signals without *underpowered* and treats it separately ("a comparison too noisy to decide is reported as such, never guessed"). §4.4 has `gate.underpowered: warn`. §4.6's roll-up reports underpowered "beside the roll-up", which can be a pass.
-
-This ADR doesn't depend on the answer, since saturation gets its own result. Recommendation: DESIGN is the design authority and its wording is deliberate (§11 records "underpowered, a warning"), so CLAUDE.md's line is corrected to match it, in a setup PR of its own. The other way to resolve it is to make `gate.underpowered` default to `fail` and put *underpowered* in the roll-up, which is a product decision with its own ADR.
+Recommendation: 1 ms p99 per edge for forwarding overhead, accept lag and Go scheduler latency; 1% of the trial's duration for OS run delay and for throttled time.
+- 1 ms is where §6.4's "sub-millisecond" claim sat, and about 35 times the +28µs per round trip of an idle proxy.
+- It is a display choice, not a budget: it decides where a marker appears and nothing else. It is revisited with the gating ADR, from the data the runs produce.
 
 ## Consequences
 
 **Proxy PRs:**
 - **Proxy 2/5 or 4/5:** the timing is part of the forwarding pipeline from the PR that first holds a chunk, not added afterwards. Each stage that delays a chunk on purpose reports when it meant to release it, so the pipeline can compute when the chunk was free to go. Recommended in 2/5, where `latency` introduces the first intended delay; at the latest in 4/5, with the pipeline. The bench job measures that PR's cost.
-- **Proxy 5/5:** the control service returns the three histograms with the counters.
-- **Proxy HTTP mode and gRPC mode (Phase 4):** each defines its own timing points in its PR: headers parsed to upstream written, upstream read to written to the client, and the proxy's own answers from when they are ready.
-- **Run record and `--json`:** per edge, per trial, base and head: count, p50, p99 and max of each measure.
-- **Verdict:** the saturated-trial rule, as the sub-questions are settled.
+- **Proxy 5/5:** the control service returns the five measures with the counters.
+- **Proxy HTTP mode and gRPC mode (Phase 4):** each defines its own timing points in its PR: headers parsed to upstream written, upstream read to written to the client, and the proxy's own answers from when they are ready. That PR must also decide how a request's wait for a pooled upstream connection in `http.Transport` is counted.
+- **Run record and `--json`:** the five measures per edge, per trial, base and head.
+- **Verdict output:** the proxy p99 on every scenario line, and the ⚠ marker. No change to any result.
 - **The `splice` follow-up** has to keep overhead measurable, or it is dropped.
 
 **Folded in on acceptance:**
-- **DESIGN §4.4 and §4.8:** the `gate` keys and the example output, as sub-questions 2 and 3 are settled.
-- **DESIGN §4.6:** the roll-up gains *proxy saturated*.
-- **DESIGN §6.1:** "no verdict on a fault that didn't land …" gains "or on a trial pair whose proxy was saturated".
-- **DESIGN §6.3:** saturated pairs are counted, then dropped and replaced within the trial budget.
-- **DESIGN §6.4:** "Proxy overhead is sub-millisecond and paid equally by base and head" becomes "Proxy overhead is measured per run and reported per edge for base and head", with what the measures don't see.
-- **DESIGN §6.6:** the proxy's counters gain the three measures.
+- **DESIGN §4.8:** the scenario line with the proxy's p99 for base and head, and the marker.
+- **DESIGN §6.4:** "Proxy overhead is sub-millisecond and paid equally by base and head" becomes "Proxy overhead is measured and reported on every run", with what the measures don't see.
 - **DESIGN §6.7:** nothing.
-- **DESIGN §6.8:** the per-edge proxy metrics gain the three measures.
+- **DESIGN §6.8:** the per-edge proxy metrics gain the five measures.
 - **DESIGN §9 risk 6:** adds "reconsider Envoy for the gRPC mode" beside the Rust rewrite.
 - **DESIGN §11:** the "Go for the binary, not Rust" row gains an italic note, "*Assumption replaced by a per-run measurement: ADR-0012*". The choice of Go stands.
 - **PLAN.md:** the proxy bullets that gain the timing, and the run-record and verdict bullets.
 
-**What becomes easier:** "is it the framework?" has an answer in every result, from that run's own numbers, on the customer's runner, with its limits stated.
+**What becomes easier:** "is it the framework?" has an answer in every result, from that run's own numbers, on the customer's runner, with its limits stated. The gating ADR gets real data to decide from.
 
 **What becomes harder:**
 - Every pipeline stage has to account for the delay it intends.
-- A noisy runner can now produce saturated trials, which cost trials and can fail a scenario. The report-only period measures how often.
-- The measures have a blind spot in the kernel, and the docs have to say so.
+- Until gating is decided, a run whose proxy was starved still gives its verdict, with a marker beside it. The reader has to look.
+- The measures have a blind spot in the kernel's network path, and the docs have to say so.
