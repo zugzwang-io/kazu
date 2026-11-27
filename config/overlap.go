@@ -15,8 +15,9 @@ import (
 // Two faults can't overlap when both windows are planned times that don't
 // intersect, or when one is sequenced after the other's end through from.
 // A fault that waits on a request count, itself or through from, has no
-// planned window. Faults on undeclared targets or with a non-positive for
-// are skipped: they are already reported.
+// planned window. Faults on undeclared edges or with a non-positive for
+// are skipped: they are already reported. Process and resource faults are
+// compared by service name as written.
 func (v *validator) overlaps(path []string, faults []Fault, byName map[string]int) {
 	at := func(i int, keys ...string) []string {
 		return append(append(slices.Clone(path), "faults", strconv.Itoa(i)), keys...)

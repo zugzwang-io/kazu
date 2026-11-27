@@ -103,8 +103,8 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 // its job now.
 var replaced = map[string]struct{ now, why string }{
 	"blackhole":     {"partition", "it holds traffic both ways and delivers it when the window ends"},
-	"restart_after": {"for", "a crash stays down for its for, then Kazu restarts it"},
-	"timeout":       {"latency", "a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet"},
+	"restart_after": {"for", "a crash stays down for the time in for, then Kazu restarts it"},
+	"timeout":       {"latency", "a delay longer than the caller's timeout makes it give up; latency applies to every request (a rate on it isn't supported yet)"},
 }
 
 // hint is suggest's " (did you mean ...?)" for s, or the replacement when s

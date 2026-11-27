@@ -163,7 +163,7 @@ Antithesis's network faults can act in one direction ("inbound packets, outbound
 Deviations, recorded in DESIGN §6.7 on acceptance:
 - **`delay` is added once per call, in one direction.** Antithesis's Slowed delays packets, so a round trip pays the delay in each direction. Kazu's `delay` then means the time added to a call, which is what users mean by "payments is slow".
 - **Overlapping faults compose through a fixed pipeline.** Antithesis lets the more aggressive fault win for the overlap.
-- **Two faults of the same kind can't overlap on one edge.** Antithesis lets network faults overlap on the same target.
+- **Two faults of the same kind can't overlap on one target** (an edge, or a service for process and resource faults). Antithesis lets network faults overlap on a link, and silently skips a second node fault on a container.
 
 `down` and `errors` have no Antithesis counterpart, since Antithesis injects no refused connections and no HTTP faults.
 
@@ -187,6 +187,7 @@ Deviations, recorded in DESIGN §6.7 on acceptance:
   - on every other kind, it is rejected.
 - Kazu's decoder fills in the defaults.
 - The validator rejects same-kind overlap by the rule above.
+- `crash` takes `for` (down that long, then restarted); `restart_after` is removed, with a "did you mean" hint.
 - Until a kind's PR implements `direction`, the planner rejects it on that kind (ADR-0007).
 - This lands as one small config PR ahead of proxy 2/5. It updates the schema tests, the type tests, the validator and its tests that use `timeout`, and the "did you mean" error list.
 
@@ -206,6 +207,7 @@ Deviations, recorded in DESIGN §6.7 on acceptance:
 - **DESIGN §4.5:**
   - the fault table, with `partition` replacing `blackhole` ("hold both ways, deliver on heal") and the `timeout` row removed;
   - `direction` in the `Fields` column;
+  - `crash` taking `for` instead of `restart_after`, in the table, the examples and the auto-crash scenarios (and PLAN.md's process-faults bullet and restart-policy decision);
   - the live-connection, partition and pipeline rules;
   - the seeding bullet's exception for `reset` on `tcp` edges.
 - **DESIGN §6.6:** the landed rule.
