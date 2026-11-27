@@ -95,7 +95,7 @@ kazu run --suite pr --base TAG=main-9c41e2 --head TAG=pr-a1f3c9
 
 The variables are usually image tags, so base and head are **images already published by CI**: Kazu pulls them and never builds. If an image doesn't exist (main's build hasn't published yet, say), the run stops with an error naming the missing image rather than building it.
 
-Kazu takes `kazu.yaml`, traffic and checks from the head commit and pins the traffic and checks images by digest once per run. Only the system differs between base and head, so a changed load script can't masquerade as a regression, and a PR can't weaken a check to hide its own regression: a deleted check is gone from both sides.
+Kazu takes `kazu.yaml`, traffic and checks from the head commit and pins every image by digest once per run: traffic, checks, and each system service on both base and head. Only the system differs between base and head, so a changed load script can't masquerade as a regression, and a PR can't weaken a check to hide its own regression: a deleted check is gone from both sides. The pins and the resolved base and head variables go in the run record, which `kazu replay` reruns from.
 
 The cost: a PR that changes the system's schema and updates a check to match runs the new check against the old schema on base. A check that **errors** on base (rather than failing an assertion), for example on a missing column, is reported as **incompatible with base**, not as a verdict.
 
@@ -618,7 +618,7 @@ Systems that are not containerized, or that depend on externally managed state (
 ```
 ┌──────────────────────── Any runner: laptop, CI job, k8s pod, VM, hosted microVM ────────────────────────┐
 │ kazu (single Go binary)                                                                                │
-│ ├─ Config compiler ─ kazu.yaml + seed → content-hashed plan (scenarios × trials × {base, head})         │
+│ ├─ Config compiler ─ kazu.yaml + seed → pinned plan (scenarios × trials × {base, head})                 │
 │ ├─ Env driver ────── compose, or K3s + rendered manifests; inserts proxies, per-caller aliases and      │
 │ │                    the OTLP endpoint; waits for readiness; starts traffic; watches events and logs    │
 │ ├─ Controller ────── pushes fault programs to proxies; process faults via Docker API / kubelet;          │
@@ -649,8 +649,7 @@ Systems that are not containerized, or that depend on externally managed state (
 - **Proxies evaluate their own fault programs.** The controller compiles a program per proxy and pushes it before traffic starts, so request-count triggers never race a network round trip. Cross-component faults (crash after N requests on an edge) go through the controller, which records the request number where the fault actually landed.
 - **Fresh environment per trial.** No reset logic. Startup cost is paid with parallelism, not reuse.
 - **Trial pairs are the unit of work.** One base trial and one head trial of the same scenario and seed, back to back on the same machine, so runner noise hits both equally. Workers lease pairs; an expired lease puts the pair back in the queue. The spread of differences across pairs is also each run's own noise estimate.
-- **Content addressing.** `plan_hash = H(scenario, seed, check and traffic image digests and mounted files, system image digests on the scenario's path)`. Identical base/head hashes skip the scenario. The run record is plan + results (including the trial's metrics), which is exactly what replay needs.
-- **Traffic and checks are pinned once per run.** Their images are resolved to digests and their mounted files hashed before the first trial, and the same pins serve base and head, so only the system differs between the two.
+- **Every image is pinned once per run, for replay.** Before the first trial, every image is resolved to a digest (traffic, checks, and each system service on both base and head) and the mounted files are hashed. The same traffic and checks pins serve base and head, so only the system differs between the two. The run record is the plan (with those pins and the resolved base and head variables) plus the results (including each trial's metrics), which is exactly what replay needs. Every selected scenario runs on every run, base and head; Kazu never skips one as unchanged ([ADR-0010](docs/adr/0010-every-scenario-runs-on-every-run.md)).
 - **Kazu knows which crashes are its own.** The controller records every process fault it injects, so the default crash and exit checks can tell an injected `crash` from a real one.
 - **No verdict on a fault that didn't land, on a metric with no data, or on a comparison too noisy to decide** (§4.6, §6.6, §6.8).
 - **The CLI is complete without the backend.** Baselines can live in CI artifacts. If the control plane is down, runs fall back to the customer's runners and still gate.
@@ -677,7 +676,7 @@ Any machine that can run `kazu worker` is a runner.
 |---|---|---|
 | `local`, serial | 50 runs × 100 s | ~85 min |
 | Static shards ×10 | | ~10–15 min |
-| + adaptive trials, skip unchanged | most scenarios need 3 trials; unchanged ones skip | ~5–8 min |
+| + adaptive trials | most scenarios need 3 trials | ~6–9 min |
 | Hosted lanes ×25 with snapshot boot | boot ≈ 0 s after first | ~2–4 min |
 
 On K3s, one cluster per runner is reused across trials with a fresh namespace per trial, so cluster boot is paid once per runner, not per trial.
@@ -686,7 +685,7 @@ Other limits: the system under test must fit on one runner (bigger systems: stub
 
 ### 6.5 Tech stack
 
-**Go everywhere we write code.** One language for a solo builder; the control plane imports the same packages as the binary (trial-pair leasing, run records, plan hashes) instead of reimplementing them.
+**Go everywhere we write code.** One language for a solo builder; the control plane imports the same packages as the binary (trial-pair leasing, run records) instead of reimplementing them.
 
 | Part | Choice |
 |---|---|
@@ -771,7 +770,7 @@ Traces come later: the same receiver can accept spans, enabling checks like "eac
 | Runtime, all fault types, unlimited assertions | ✅ | ✅ | ✅ |
 | Default checks; invariants in any language; proxy and OpenTelemetry metric checks | ✅ | ✅ | ✅ |
 | GitHub Action / any-CI templates, pass/fail, summaries, all output sinks | ✅ | ✅ | ✅ |
-| Smart parallelism on your runners (shards, dynamic leasing, adaptive trials, skip unchanged) | ✅ | ✅ | ✅ |
+| Smart parallelism on your runners (shards, dynamic leasing, adaptive trials) | ✅ | ✅ | ✅ |
 | AI: incident → scenario, PR coverage review, suggested invariants | | ✅ metered | ✅ |
 | **Consumer resilience contracts** (provider PRs run consumers' invariants) | | ✅ | ✅ |
 | Org registry of standard suites | | basic | full |
@@ -798,7 +797,7 @@ The target system for every step is `examples/shop` in the public repo (spec: `e
 2. **Trustworthy:** seeds, HTTP/gRPC proxy with request-count triggers and per-edge latency/error metrics, default setup and correctness checks (ready, crashes, exits, traffic exit code) from container events, `@eventually`, run records, `kazu replay`.
 3. **Gate + open-source launch:** trial pairs, statistical verdict with per-run noise estimates, `no_regression`, regression defaults and underpowered results, static shards + `merge`, GitHub Action, JUnit/Markdown/JSON outputs, PR comment; the e2e gate switches to the GitHub Action, exactly as customers use it.
 4. **Easy and everywhere:** K3s driver (rendered manifests, `hostAliases`, crash in place; moved to v1.1 by ADR-0003), OTLP receiver with PromQL `metric:` checks and the no-data check, opt-in language checks, `init`, `doctor`, process faults (built earlier, in PLAN.md's Phase 4), one-line checks (the `sql` one from step 1), TypeScript + Go SDK images, CI templates beyond GitHub, OTLP/S3/webhook sinks.
-5. **Smart parallelism:** coordinator + dynamic workers, adaptive trials, skip unchanged, base-image cache, Kubernetes runner.
+5. **Smart parallelism:** coordinator + dynamic workers, adaptive trials, base-image cache, Kubernetes runner.
 6. **Paid v1:** control plane, org-wide GitHub App, consumer contracts, incident → scenario. First web UI (server-rendered).
 7. **Later:** traces as evidence, registry and policy, waivers, coverage map, hosted lanes with snapshot boot, enterprise features.
    **Testing Kazu: the e2e gate**
@@ -813,7 +812,7 @@ Kazu is a CI gate, so it is gated the same way, on every Kazu PR, by running as 
 - Predicted misses are recorded and asserted like any other outcome; a miss is fixed only by a generic Kazu improvement, never by a shop-specific check.
   The shop's checks are written by people who know its bugs, so the shop tests Kazu's mechanics; its catch rate is not evidence of what Kazu finds on real systems. That evidence comes from dogfooding.
 
-The shop's bug flags are known, planted bugs, so this tests Kazu in both directions: a change that lets everything pass breaks the rows that expect `REGRESSED`, and one that fails everything breaks row V0. Beneath it, three faster layers also gate every PR: Go unit tests (config, schema, plan hashing, statistics on synthetic data with known answers); proxy tests against a small echo server (added latency, `down` cutting live connections, counters, the landed check); and the shop's own Go tests proving each bug flag really produces its bug, so a failing row says whether the shop or Kazu broke.
+The shop's bug flags are known, planted bugs, so this tests Kazu in both directions: a change that lets everything pass breaks the rows that expect `REGRESSED`, and one that fails everything breaks row V0. Beneath it, three faster layers also gate every PR: Go unit tests (config, schema, statistics on synthetic data with known answers); proxy tests against a small echo server (added latency, `down` cutting live connections, counters, the landed check); and the shop's own Go tests proving each bug flag really produces its bug, so a failing row says whether the shop or Kazu broke.
 
 Keeping it fast and reliable:
 - **Sharded** across about 10 jobs with Kazu's own static shards, targeting the same ~10-minute budget as a customer's PR gate.
@@ -876,7 +875,7 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | Fault layers: network → HTTP/gRPC → process, kernel last | Application teams break on dependencies and crashes, not packet reordering |
 | Four components with one job each (system, traffic, checks, `kazu.yaml`) and a fixed, hook-free trial lifecycle | Sharp entry and exit points; setup lives in the system, cleanup is deleting it, load never judges, checks never send load |
 | Everything Kazu runs is an image: system, traffic and checks; SDK images provided | The runner needs only Docker; checks are hermetic like everything else; files can be mounted so the simple case needs no build |
-| Traffic and checks pinned by digest once per run and taken from head | Only the system differs between base and head, so a changed load script or check can't look like a regression |
+| Traffic and checks pinned by digest once per run and taken from head | Only the system differs between base and head, so a changed load script or check can't look like a regression. *Extended by ADR-0010: system images are pinned too, for replay* |
 | Base and head selected by variables the system file interpolates (`--base TAG=...`, `--head TAG=...`) | One config describes both; works with any image-tagging scheme; the shop's bug flags use the same mechanism |
 | Two check timings, `@after` and `@eventually`; no `@during`, no executable-check tier | YAGNI: every modelled failure is visible after traffic exits; SDK images and one-line checks cover every language |
 | k6 is the one supported traffic tool; the template is a k6 script, not a Kazu requests format | Constant arrival rate built in, scriptable multi-step flows, one official image, the largest user base. A template avoids designing and maintaining a second format. Any image still works |
@@ -905,11 +904,11 @@ Pre-repo log, frozen as of 2026-10-14. New decisions are recorded as ADRs in `do
 | Paid = hosting, AI, org coordination | Costs us money or is bought by the organization, not the individual |
 | Umbrella: Zugzwang; product: Kazu | Zugzwang matches the existing GitHub org (zugzwang-io) and can hold unrelated projects; Kazu is short, snappy and free on npm and crates.io. tesseracanvas.com stays with the canvas project |
 | Go for the binary, not Rust | Learnable in weeks rather than months for a newcomer to both; compose-go and the official Docker/Kubernetes clients address the top adoption risk; Rust's speed edge cancels out because base and head pay the same proxy overhead |
-| Go for the control plane, not Kotlin (Spring or Ktor) | Shares trial-pair leasing, run records and plan hashes with the binary instead of reimplementing them; one toolchain for a solo builder. Spring rejected outright (annotation/DI magic, enterprise strengths we buy from WorkOS) |
+| Go for the control plane, not Kotlin (Spring or Ktor) | Shares trial-pair leasing, run records and plan hashes with the binary instead of reimplementing them; one toolchain for a solo builder. Spring rejected outright (annotation/DI magic, enterprise strengths we buy from WorkOS). *Plan hashes dropped by ADR-0010* |
 | One Protobuf schema for every protocol | Types generated for every SDK language and for Go/TypeScript clients; no hand-maintained duplicate types |
 | Docker Engine API, not Docker Desktop | Engine, CLI and Compose are Apache 2.0; Desktop's paid terms are the customer's concern, and the API also covers Podman, OrbStack and Colima |
 | No `cargo install` for the CLI | crates.io builds from source and the CLI is a Go binary; Rust users install via brew or the script. Names are still claimed |
 | Server-rendered UI first (templ + htmx); React later | YAGNI: no UI before step 6, and the first pages are simple. Splitting front end and back end doesn't improve E2E testing and doubles toolchains for one person. The Connect API exists for the CLI anyway, so moving to React later rewrites pages, not the backend |
-| Control plane in a separate private repo (e.g. `zugzwang-io/kazu-cloud`), not an `ee/` directory in the public repo | A public repo can't hold closed code. The control plane imports the shared packages (leasing, run records, plan hashes) from `github.com/zugzwang-io/kazu` as a normal Go module, so those must live outside `internal/`. Keeps the public repo all-Apache and easy to explain at launch; a private repo can be opened later, but published code can't be taken back |
+| Control plane in a separate private repo (e.g. `zugzwang-io/kazu-cloud`), not an `ee/` directory in the public repo | A public repo can't hold closed code. The control plane imports the shared packages (leasing, run records, plan hashes) from `github.com/zugzwang-io/kazu` as a normal Go module, so those must live outside `internal/`. Keeps the public repo all-Apache and easy to explain at launch; a private repo can be opened later, but published code can't be taken back. *Plan hashes dropped by ADR-0010* |
 | Stack picks beyond the standard library (sqlc, templ, Connect, River) | Each removes hand-maintained glue: query mapping, untyped templates, duplicate API types, a homemade job queue. templ is the least essential and the first to drop if we want maximum boring |
 | One toy system (`examples/shop`) is the target, the demo and the test oracle | Ground truth for Kazu's own correctness; bugs and traps are env flags so base and head differ without new commits |
