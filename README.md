@@ -81,7 +81,7 @@ Each fault produces one distinct outcome; there is exactly one natural way to ex
 
 | Fault | Mimics | What the service does | What its callers see |
 |---|---|---|---|
-| `crash` | a process dying | killed, then restarted in place after `restart_after` | resets on live connections, refused connections until it is back |
+| `crash` | a process dying | killed, then restarted in place after its `for` | resets on live connections, refused connections until it is back |
 | `pause` | a process frozen (a long GC pause, a stopped VM) | frozen for the window, then carries on | silence: connections stay open with no answers |
 | `cpu`, `memory` | a starved host | runs under CPU or memory pressure (mechanism still open: a load or a quota) | slower answers, or an out-of-memory kill |
 | `disk_full` | a full disk | writes fail with "no space left" | whatever errors the service returns |

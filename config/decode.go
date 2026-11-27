@@ -141,9 +141,6 @@ func (d *decoder) fault(n *yaml.Node) Fault {
 	if v := f["load"]; v != nil {
 		ft.Load = d.percent(v)
 	}
-	if v := f["restart_after"]; v != nil {
-		ft.RestartAfter = d.duration(v)
-	}
 	if v := f["after"]; v != nil {
 		ft.After = d.duration(v)
 	}

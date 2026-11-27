@@ -64,11 +64,8 @@ func TestRules(t *testing.T) {
 		{"request count on a service with only tcp edges", "scenarios:\n  a:\n    faults:\n      - { service: postgres, fault: crash, after_requests: 3 }\n", []string{
 			`13:60: scenarios.a.faults[0].after_requests: after_requests on a service counts requests on its declared http and grpc inbound edges, and postgres has none. Use after: <duration>`,
 		}},
-		{"for on a crash", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, for: 5s }\n", []string{
-			`13:49: scenarios.a.faults[0].for: a crash is instant; restart_after sets how long the service stays down`,
-		}},
-		{"zero restart_after", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, restart_after: 0s }\n", []string{
-			`13:59: scenarios.a.faults[0].restart_after: must be longer than zero`,
+		{"zero for on a crash", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, for: 0s }\n", []string{
+			`13:49: scenarios.a.faults[0].for: must be longer than zero`,
 		}},
 		{"jitter above delay", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 100ms, jitter: 5s }\n", []string{
 			`13:77: scenarios.a.faults[0].jitter: jitter (5s) is more than delay (100ms), so the delay could go negative`,
@@ -134,8 +131,8 @@ func TestAnchorRules(t *testing.T) {
 		{"end of a fault without for", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { edge: checkout -> postgres, fault: down, from: [{ start: x }, x] }\n", []string{
 			`14:73: scenarios.a.faults[1].from[1]: x has no for, so it lasts until traffic ends; give it a for, or count from { start: x }`,
 		}},
-		{"end of a crash", "scenarios:\n  a:\n    faults:\n      - { name: x, service: payments, fault: crash }\n      - { edge: checkout -> postgres, fault: down, from: x }\n", []string{
-			`14:58: scenarios.a.faults[1].from: a crash is instant, so x has no end; count from { start: x }`,
+		{"end of a crash without for", "scenarios:\n  a:\n    faults:\n      - { name: x, service: payments, fault: crash }\n      - { service: payments, fault: crash, from: x }\n", []string{
+			`14:50: scenarios.a.faults[1].from: x has no for, so it lasts until traffic ends; give it a for, or count from { start: x }`,
 		}},
 		{"two faults with one name", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: x, edge: checkout -> postgres, fault: down }\n", []string{
 			`14:17: scenarios.a.faults[1].name: another fault in this scenario is already named "x"`,
@@ -302,17 +299,28 @@ func TestOverlap(t *testing.T) {
 			"{ edge: checkout -> payments, fault: down }",
 		), []string{overlapError(2, "faults[1]", "faults[2]", "down", "checkout -> payments", true)}},
 		{"crashes whose windows overlap", faults(
-			"{ service: payments, fault: crash, after: 20s, restart_after: 10s }",
-			"{ service: payments, fault: crash, after: 25s, restart_after: 5s }",
-		), []string{
-			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both crash faults on payments and can be active at once; keep one, or space the crashes apart, so one comes after the other's restart`,
-		}},
+			"{ service: payments, fault: crash, after: 20s, for: 10s }",
+			"{ service: payments, fault: crash, after: 25s, for: 5s }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "crash", "payments", false)}},
 		{"a crash that never restarts, then any later crash", faults(
 			"{ service: payments, fault: crash, after: 20s }",
-			"{ service: payments, fault: crash, after: 1h, restart_after: 5s }",
-		), []string{
-			`14:9: scenarios.a.faults[1]: faults[0] and faults[1] are both crash faults on payments and can be active at once; keep one, or give faults[0] a restart_after, or space the crashes apart`,
-		}},
+			"{ service: payments, fault: crash, after: 1h, for: 5s }",
+		), []string{overlapError(1, "faults[0]", "faults[1]", "crash", "payments", true)}},
+		{"siblings from one request-count fault", faults(
+			counted,
+			"{ name: p, edge: checkout -> payments, fault: down, from: { start: r }, for: 5s }",
+			"{ edge: checkout -> payments, fault: down, from: { start: r }, after: 10s, for: 5s }",
+		), []string{overlapError(2, "p", "faults[2]", "down", "checkout -> payments", false)}},
+		{"offsets from one request-count fault", faults(
+			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
+			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: a }, after: 10s }",
+		), []string{overlapError(1, "a", "faults[1]", "latency", "checkout -> payments", false)}},
+		{"a join on a request count against a planned window", faults(
+			"{ edge: checkout -> payments, fault: down, after: 10s, for: 10s }",
+			counted,
+			planned,
+			"{ edge: checkout -> payments, fault: down, from: [r, t], for: 5s }",
+		), []string{overlapError(3, "faults[0]", "faults[3]", "down", "checkout -> payments", false)}},
 		{"faults on traffic are reported once", faults(
 			"{ service: traffic, fault: pause }",
 			"{ service: traffic, fault: pause }",
@@ -368,9 +376,10 @@ func TestOverlapAccepts(t *testing.T) {
 			"{ edge: checkout -> payments, fault: down, after: 30s, for: 10s }",
 			"{ edge: checkout -> payments, fault: down, after: 20s, for: 10s }",
 		)},
-		{"offsets from one request-count fault", faults(
-			"{ name: a, edge: checkout -> payments, fault: latency, delay: 1s, after_requests: 100, for: 10s }",
-			"{ edge: checkout -> payments, fault: latency, delay: 1s, from: { start: a }, after: 10s }",
+		{"siblings from one request-count fault, chained", faults(
+			counted,
+			"{ name: p, edge: checkout -> payments, fault: down, from: { start: r }, for: 5s }",
+			"{ edge: checkout -> payments, fault: down, from: p, after: 5s, for: 5s }",
 		)},
 		{"a join that starts after the other ends", faults(
 			"{ edge: checkout -> payments, fault: down, after: 12s, for: 20s }",
@@ -420,11 +429,11 @@ func TestOverlapAccepts(t *testing.T) {
 			"{ service: checkout, fault: cpu, load: 90% }",
 		)},
 		{"crashes spaced past their restarts", faults(
-			"{ service: payments, fault: crash, after: 20s, restart_after: 5s }",
-			"{ service: payments, fault: crash, after: 60s, restart_after: 5s }",
+			"{ service: payments, fault: crash, after: 20s, for: 5s }",
+			"{ service: payments, fault: crash, after: 60s, for: 5s }",
 		)},
 		{"a crash at the moment the last one restarts", faults(
-			"{ service: payments, fault: crash, after: 20s, restart_after: 5s }",
+			"{ service: payments, fault: crash, after: 20s, for: 5s }",
 			"{ service: payments, fault: crash, after: 25s }",
 		)},
 	}
@@ -514,10 +523,11 @@ func TestRulesAccept(t *testing.T) {
 	tests := []struct{ name, yaml string }{
 		{"edge spacing is normalised", "scenarios:\n  a:\n    faults:\n      - { edge: checkout->payments, fault: latency, delay: 1s }\n"},
 		{"request count on an http edge", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: errors, rate: 5%, code: 503, after_requests: 10 }\n"},
-		{"request count on a service with mixed inbound edges", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, after_requests: 3, restart_after: 1s }\n"},
+		{"request count on a service with mixed inbound edges", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, after_requests: 3, for: 1s }\n"},
 		{"measured service with mixed inbound edges", "checks:\n  - recovers: { service: payments, within: 30s }\n  - slo: { service: payments, measure: p99, max: 250ms }\n  - no_regression: { service: payments, measure: error_rate, within: 10% }\n"},
 		{"tls on grpc", "scenarios: {}\n"},
 		{"jitter equal to delay", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 100ms, jitter: 100ms }\n"},
+		{"a crash from the end of a crash with for", "scenarios:\n  a:\n    faults:\n      - { name: x, service: payments, fault: crash, after: 20s, for: 5s }\n      - { service: payments, fault: crash, from: x }\n"},
 		{"anchors: a join, and the start of a fault without for", "scenarios:\n  a:\n    faults:\n      - { name: x, edge: checkout -> payments, fault: down }\n      - { name: y, edge: worker -> payments, fault: down, for: 5s, from: { start: x } }\n      - { edge: payments -> fraud, fault: down, from: [y, { start: x }], after: 1s }\n"},
 		{"metric pinned to one value", "checks:\n  - metric: { query: up, min: 1, max: 1 }\n"},
 		{"zero tolerance", "checks:\n  - no_regression: { service: payments, measure: p99, within: 0% }\n"},

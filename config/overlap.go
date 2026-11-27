@@ -12,27 +12,23 @@ import (
 // provably can't be active at once, whatever their directions. The target
 // is the edge for network and request faults, where a service stands for
 // each of its declared inbound edges, and the service for process faults.
-// Two faults can't overlap when their windows count from the same point and
-// don't intersect, or when one is sequenced after the other's end through
-// from. A crash's window runs until Kazu restarts the container, so its
-// length is restart_after. Faults on undeclared targets or with a
-// non-positive length are skipped: they are already reported.
+// Two faults can't overlap when both windows are planned times that don't
+// intersect, or when one is sequenced after the other's end through from.
+// A fault that waits on a request count, itself or through from, has no
+// planned window. Faults on undeclared targets or with a non-positive for
+// are skipped: they are already reported.
 func (v *validator) overlaps(path []string, faults []Fault, byName map[string]int) {
-	at := func(i int, key string) []string {
-		return append(slices.Clone(path), "faults", strconv.Itoa(i), key)
+	at := func(i int, keys ...string) []string {
+		return append(append(slices.Clone(path), "faults", strconv.Itoa(i)), keys...)
 	}
 	spans := make([]time.Duration, len(faults))
 	targets := make([][]string, len(faults))
 	for i, f := range faults {
-		key, d := "for", f.For
-		if f.Kind == Crash {
-			key, d = "restart_after", f.RestartAfter
-		}
 		spans[i] = forever
-		if v.node(at(i, key)...) != nil {
-			spans[i] = d
+		if v.node(at(i, "for")...) != nil {
+			spans[i] = f.For
 		}
-		if d > 0 || spans[i] == forever {
+		if spans[i] > 0 {
 			targets[i] = v.targets(f)
 		}
 	}
@@ -54,16 +50,10 @@ func (v *validator) overlaps(path []string, faults []Fault, byName map[string]in
 				continue
 			}
 			fix := "sequence them with from: so one starts after the other ends"
-			switch open := spans[i] == forever; {
-			case a.Kind == Crash && open:
-				fix = fmt.Sprintf("give %s a restart_after, or space the crashes apart", label(i))
-			case a.Kind == Crash:
-				fix = "space the crashes apart, so one comes after the other's restart"
-			case open:
+			if spans[i] == forever {
 				fix = fmt.Sprintf("give %s a for and %s", label(i), fix)
 			}
-			v.ps.add(append(slices.Clone(path), "faults", strconv.Itoa(j)), fmt.Sprintf(
-				"%s and %s are both %s faults on %s and can be active at once; keep one, or %s",
+			v.ps.add(at(j), fmt.Sprintf("%s and %s are both %s faults on %s and can be active at once; keep one, or %s",
 				label(i), label(j), a.Kind, target, fix))
 		}
 	}
@@ -100,22 +90,16 @@ func sharedTarget(a, b []string) (string, bool) {
 	return "", false
 }
 
-// window is a fault's half-open interval [start, end), counted from origin:
-// traffic start, or the trigger of the request-count fault at that index.
-type window struct {
-	origin     int
-	start, end time.Duration
-}
+// window is a fault's planned half-open interval [start, end) from traffic
+// start.
+type window struct{ start, end time.Duration }
 
-const (
-	fromTraffic = -1
-	forever     = time.Duration(math.MaxInt64)
-)
+const forever = time.Duration(math.MaxInt64)
 
 // disjoint reports whether two windows are known not to intersect. A nil
 // window isn't known before the run.
 func (w *window) disjoint(o *window) bool {
-	return w != nil && o != nil && w.origin == o.origin && (w.end <= o.start || o.end <= w.start)
+	return w != nil && o != nil && (w.end <= o.start || o.end <= w.start)
 }
 
 // later adds two non-negative durations, saturating at forever.
@@ -127,7 +111,8 @@ func later(t, d time.Duration) time.Duration {
 }
 
 // schedule answers timing questions about one scenario's faults. spans
-// holds each fault's length, forever when it has none.
+// holds each fault's for, forever when it has none; after memoises
+// sequenced.
 type schedule struct {
 	faults []Fault
 	byName map[string]int
@@ -135,9 +120,9 @@ type schedule struct {
 	after  map[[2]int]bool
 }
 
-// windows resolves every fault's window that can be known before the run.
-// A window is nil when its from joins anchors counted from different
-// points, names no fault, or starts too late to hold.
+// windows resolves every fault's planned window. A window is nil when the
+// fault waits on a request count, itself or through from, when from names
+// no fault, or when it starts too late to hold.
 func (s *schedule) windows() []*window {
 	ws := make([]*window, len(s.faults))
 	seen := make([]bool, len(s.faults))
@@ -148,34 +133,31 @@ func (s *schedule) windows() []*window {
 		}
 		seen[i] = true
 		f := s.faults[i]
-		w := &window{origin: fromTraffic}
 		if f.AfterRequests > 0 {
-			w.origin = i
+			return nil
 		}
-		for n, a := range f.From {
+		var start time.Duration
+		for _, a := range f.From {
 			k, ok := s.byName[a.Fault]
 			if !ok {
 				return nil
 			}
 			aw := resolve(k)
-			if aw == nil || n > 0 && aw.origin != w.origin {
+			if aw == nil {
 				return nil
 			}
 			t := aw.end
 			if a.Start {
 				t = aw.start
 			}
-			if n == 0 || t > w.start {
-				w.origin, w.start = aw.origin, t
-			}
+			start = max(start, t)
 		}
-		w.start = later(w.start, f.After)
-		if w.start == forever {
+		start = later(start, f.After)
+		if start == forever {
 			return nil
 		}
-		w.end = later(w.start, s.spans[i])
-		ws[i] = w
-		return w
+		ws[i] = &window{start, later(start, s.spans[i])}
+		return ws[i]
 	}
 	for i := range s.faults {
 		resolve(i)
@@ -194,7 +176,7 @@ func (s *schedule) sequenced(j, i int) bool {
 	s.after[key] = false
 	for _, a := range s.faults[j].From {
 		k, ok := s.byName[a.Fault]
-		if ok && (!a.Start && k == i || s.sequenced(k, i)) {
+		if ok && ((!a.Start && k == i) || s.sequenced(k, i)) {
 			s.after[key] = true
 			return true
 		}

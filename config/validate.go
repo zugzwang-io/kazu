@@ -125,9 +125,6 @@ func (v *validator) fault(path []string, ft *Fault) {
 	if f["limit"] != nil && ft.Limit <= 0 {
 		v.ps.add(at("limit"), "must be above zero; use down to stop traffic entirely")
 	}
-	if f["restart_after"] != nil {
-		v.positive(at("restart_after"), ft.RestartAfter)
-	}
 	if f["code"] != nil && known && edge.Protocol.RequestLevel() {
 		code, problem := statusCode(edge.Protocol, ft.Code)
 		if problem != "" {
@@ -137,9 +134,6 @@ func (v *validator) fault(path []string, ft *Fault) {
 	}
 
 	if f["for"] != nil {
-		if ft.Kind == Crash {
-			v.ps.add(at("for"), "a crash is instant; restart_after sets how long the service stays down")
-		}
 		v.positive(at("for"), ft.For)
 	}
 	if f["after_requests"] != nil && known {
@@ -185,8 +179,6 @@ func (v *validator) anchors(path []string, faults []Fault) map[string]int {
 				v.ps.add(apath, "a fault can't count from itself")
 			case a.Start:
 				next[i] = append(next[i], k)
-			case faults[k].Kind == Crash:
-				v.ps.add(apath, fmt.Sprintf("a crash is instant, so %s has no end; count from { start: %s }", a.Fault, a.Fault))
 			case v.node(at(k, "for")...) == nil:
 				v.ps.add(apath, fmt.Sprintf("%s has no for, so it lasts until traffic ends; give it a for, or count from { start: %s }", a.Fault, a.Fault))
 			default:

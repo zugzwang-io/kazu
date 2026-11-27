@@ -28,7 +28,7 @@ scenarios:
       - { service: postgres, fault: down, after: 20s, for: 15s }
   payments-dies-midflight:
     faults:
-      - { service: payments, fault: crash, after_requests: 200, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 200, for: 5s }
   double-click:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }
   browse-under-outage:
@@ -39,7 +39,7 @@ scenarios:
     traffic: { command: [run, /load/soak.js] }
     env: { traffic: { DURATION: 180s } }
     faults:
-      - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 500, for: 5s }
   rare-errors:
     not_exercised: warn
     faults:

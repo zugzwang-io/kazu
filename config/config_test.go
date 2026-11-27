@@ -71,7 +71,7 @@ func TestReference(t *testing.T) {
 		t.Errorf("db-blip faults = %+v", blip.Faults)
 	}
 	midflight, _ := cfg.Scenario("payments-dies-midflight")
-	if f := midflight.Faults[0]; f.Service != "payments" || f.Kind != config.Crash || f.AfterRequests != 200 || f.RestartAfter != 5*time.Second {
+	if f := midflight.Faults[0]; f.Service != "payments" || f.Kind != config.Crash || f.AfterRequests != 200 || f.For != 5*time.Second {
 		t.Errorf("payments-dies-midflight fault = %+v", f)
 	}
 	double, _ := cfg.Scenario("double-click")

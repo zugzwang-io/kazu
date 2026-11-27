@@ -189,7 +189,6 @@
         },
         "limit": { "$ref": "#/$defs/bandwidth" },
         "load": { "$ref": "#/$defs/share" },
-        "restart_after": { "$ref": "#/$defs/duration" },
         "after": { "$ref": "#/$defs/duration" },
         "after_requests": { "type": "integer", "minimum": 1 },
         "from": {
@@ -212,23 +211,23 @@
       "allOf": [
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "latency" } } },
-          "then": { "required": ["delay"], "properties": { "direction": { "enum": ["request", "response"] }, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "required": ["delay"], "properties": { "direction": { "enum": ["request", "response"] }, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "enum": ["down", "partition"] } } },
-          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "reset" } } },
-          "then": { "required": ["rate"], "properties": { "direction": { "enum": ["request", "response"] }, "delay": false, "jitter": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "required": ["rate"], "properties": { "direction": { "enum": ["request", "response"] }, "delay": false, "jitter": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "bandwidth" } } },
-          "then": { "required": ["limit"], "properties": { "direction": { "enum": ["request", "response", "both"] }, "delay": false, "jitter": false, "rate": false, "code": false, "load": false, "restart_after": false } }
+          "then": { "required": ["limit"], "properties": { "direction": { "enum": ["request", "response", "both"] }, "delay": false, "jitter": false, "rate": false, "code": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "errors" } } },
-          "then": { "required": ["rate", "code"], "properties": { "direction": false, "delay": false, "jitter": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "required": ["rate", "code"], "properties": { "direction": false, "delay": false, "jitter": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "crash" } } },
@@ -236,11 +235,11 @@
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "enum": ["pause", "disk_full"] } } },
-          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "enum": ["cpu", "memory"] } } },
-          "then": { "required": ["load"], "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "restart_after": false } }
+          "then": { "required": ["load"], "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "errors" } } },

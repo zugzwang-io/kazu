@@ -41,6 +41,9 @@ func TestProblems(t *testing.T) {
 		{"timeout, dropped", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: timeout, rate: 5% }\n", []string{
 			`13:46: scenarios.a.faults[0].fault: "timeout" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "latency"? a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet)`,
 		}},
+		{"restart_after, now for", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, restart_after: 5s }\n", []string{
+			`13:44: scenarios.a.faults[0].restart_after: unknown key "restart_after" (did you mean "for"? a crash stays down for its for, then Kazu restarts it)`,
+		}},
 		{"latency both ways", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 1s, direction: both }\n", []string{
 			`13:77: scenarios.a.faults[0].direction: "both" is not one of "request", "response" (latency acts in one direction; to slow both streams use bandwidth)`,
 		}},

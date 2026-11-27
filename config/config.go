@@ -180,9 +180,6 @@ type Fault struct {
 	Code          string        // errors: an HTTP status ("503") or a gRPC code name ("UNAVAILABLE")
 	Limit         BitRate       // bandwidth
 	Load          Percent       // cpu, memory
-	// RestartAfter is how long a crashed container stays down before Kazu
-	// restarts it; zero means right away.
-	RestartAfter time.Duration
 
 	// After counts from traffic start, or from the latest of From's anchors
 	// when From is set; AfterRequests counts requests through the
@@ -190,7 +187,8 @@ type Fault struct {
 	After         time.Duration
 	AfterRequests int
 	From          []Anchor
-	// For is how long the fault lasts; zero means until traffic ends.
+	// For is how long the fault lasts: for a crash, how long the container
+	// stays down before Kazu restarts it. Zero means until traffic ends.
 	For time.Duration
 }
 

@@ -37,7 +37,7 @@ func schemaProblems(ps *problems, ve *jsonschema.ValidationError) {
 	case *kind.AdditionalProperties:
 		allowed := schemaProperties(ve.SchemaURL)
 		for _, p := range k.Properties {
-			ps.addKey(append(slices.Clone(path), p), fmt.Sprintf("unknown key %q", p)+suggest(p, allowed))
+			ps.addKey(append(slices.Clone(path), p), fmt.Sprintf("unknown key %q", p)+hint(p, allowed))
 		}
 	default:
 		if len(ve.Causes) > 0 {
@@ -72,14 +72,11 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 			want[i] = fmt.Sprint(w)
 		}
 		got := fmt.Sprint(k.Got)
-		hint := suggest(got, want)
-		if r, ok := replacedValues[got]; ok && slices.Contains(want, r.value) {
-			hint = fmt.Sprintf(" (did you mean %q? %s)", r.value, r.why)
-		}
+		h := hint(got, want)
 		if why, ok := oneWay[faultKindAt(root, path)]; ok && got == "both" && path[len(path)-1] == "direction" {
-			hint = " (" + why + ")"
+			h = " (" + why + ")"
 		}
-		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + hint
+		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + h
 	case *kind.Const:
 		return fmt.Sprintf("%q is not allowed here; the only text value is %q", fmt.Sprint(k.Got), fmt.Sprint(k.Want))
 	case *kind.Pattern:
@@ -102,11 +99,21 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 	}
 }
 
-// replacedValues are values Kazu once took, each with the one that does
+// replaced are keys and values Kazu once took, each with the one that does
 // its job now.
-var replacedValues = map[string]struct{ value, why string }{
-	"blackhole": {"partition", "it holds traffic both ways and delivers it when the window ends"},
-	"timeout":   {"latency", "a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet"},
+var replaced = map[string]struct{ now, why string }{
+	"blackhole":     {"partition", "it holds traffic both ways and delivers it when the window ends"},
+	"restart_after": {"for", "a crash stays down for its for, then Kazu restarts it"},
+	"timeout":       {"latency", "a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet"},
+}
+
+// hint is suggest's " (did you mean ...?)" for s, or the replacement when s
+// is a name Kazu once took and its replacement is a candidate.
+func hint(s string, candidates []string) string {
+	if r, ok := replaced[s]; ok && slices.Contains(candidates, r.now) {
+		return fmt.Sprintf(" (did you mean %q? %s)", r.now, r.why)
+	}
+	return suggest(s, candidates)
 }
 
 // oneWay explains, per kind, why its direction can't be both.
