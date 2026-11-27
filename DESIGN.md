@@ -40,7 +40,7 @@ Package names differing from the command is normal (`awscli` → `aws`, `azure-c
 2. **The customer provides a complete, isolated system; Kazu owns the wires and the checks.** The system is a compose file or rendered Kubernetes manifests, with no outbound internet, and services reach each other by name. The same packaging contract as Antithesis.
 3. **Fresh environment per trial.** Clean state comes from the customer's own images and seed scripts, never from Kazu.
 4. **Follow Antithesis by default.** Where they have made a design decision for the same problem, we take it. Deviations are deliberate, listed in §6.7, and flagged when they are proposed.
-5. **Fail only on facts; every failure has a way forward in the user's config.** Heuristics may warn. A check passes if Kazu can verify that head is no worse than base, and otherwise fails; a scenario passes if and only if it provably ran and every check passed (§4.6). "No worse" has three proofs: head passed the check, base failed it, or both sides were measured and the comparison puts head within tolerance. An unknown is always resolved against head. So a missing signal (a fault that never landed, a metric with no data, a check whose `requires:` was never met, a comparison too noisy to decide) is never a pass, and a comparison too noisy to decide is reported as underpowered, never guessed to be a regression. Every failure has a way forward in the user's config: a severity switch, `blocking: false` on the scenario, or an edit to the check in head's `kazu.yaml` (fix it, remove it, or `defaults.off`). Results that say nothing about the system (*trial incomplete*) are fixed by running again. Nothing in Kazu can leave a customer blocked with no way forward.
+5. **Fail only on facts; every failure has a way forward in the user's config.** Heuristics may warn. A check passes only if Kazu can verify that head is no worse than base: head passed it, base failed it, or both were measured and head is within tolerance. A scenario passes only if it provably ran and every check passed (§4.6). An unknown is always resolved against head, so a missing signal (a fault that never landed, a metric with no data, a check whose `requires:` was never met) is never a pass; too noisy to decide is reported as underpowered, never guessed. Every failure has a way forward in the user's config: a severity switch, `blocking: false` on the scenario, or an edit to the check in head's `kazu.yaml` (fix it, remove it, or `defaults.off`). Results that say nothing about the system (*trial incomplete*) are fixed by running again. Nothing in Kazu can leave a customer blocked with no way forward.
 6. **Never gate correctness; never cap the customer's own compute.** The free tier is complete, correct and as fast as their hardware allows.
 7. **Charge for what costs us money or what an organization needs:** hosting, AI features, cross-team coordination and governance.
 8. **Once free, always free.** No relicensing, no moving features behind a paywall later.
@@ -619,10 +619,10 @@ Runners and output sinks are flags, not config: the CI templates written by `kaz
 ```
 kazu run  ·  suite pr  ·  base main@9c41e2 vs head a1f3c9  ·  adaptive trials
  
-  slow-payments              ✓ pass       p99 612ms → 640ms (+4%, within 20%)  ·  proxy forwarding p99: base 40µs, head 42µs
-  stripe-errors              ✗ REGRESSED  no_double_charge  0/5 → 4/5 trials failing  ·  proxy forwarding p99: base 38µs, head 2.1ms ▲
-  db-blip                    ✓ pass       recovers in 11s → 9s  ·  proxy forwarding p99: base 41µs, head 39µs
-  double-click               ✗ REGRESSED  default: unexpected crash  payments exited with SIGSEGV in 3/5 trials  ·  proxy forwarding p99: base 37µs, head 40µs
+  slow-payments               ✓ pass       p99 612ms → 640ms (+4%, within 20%)  ·  proxy forwarding p99: base 40µs, head 42µs
+  stripe-errors               ✗ REGRESSED  no_double_charge  0/5 → 4/5 trials failing  ·  proxy forwarding p99: base 38µs, head 2.1ms ▲
+  db-blip                     ✓ pass       recovers in 11s → 9s  ·  proxy forwarding p99: base 41µs, head 39µs
+  double-click (non-blocking) ✗ REGRESSED  default: unexpected crash  payments exited with SIGSEGV in 3/5 trials  ·  proxy forwarding p99: base 37µs, head 40µs
  
   ✗ stripe-errors: 3 orders charged more than once, e.g. [o_81, o_93, o_97]
     changed since base: payments (a1f3c9 "retry stripe call on 503")
@@ -640,22 +640,24 @@ Every result that fails a scenario is listed on a `✗` line. A fault that never
     requires: "select 1 from charges limit 1" on postgres returned no rows in any of 5 base and 5 head trials; check that traffic creates charges
   ✗ db-blip: metric "payment attempts per order" has no data
     no samples for payment_attempts_total; check the service's OTLP exporter (kazu doctor)
-  ✗ db-blip: latency within 1% is underpowered
+  ✗ slow-payments: latency within 1% is underpowered
     this run's noise on checkout p99 is ±14% after 12 trial pairs; widen the tolerance, allow more trials or use a quieter runner
     to stop this blocking: underpowered: warn on the scenario
   ✗ new-export: payments_p99 within 10% has no baseline on base
     this path is new in head; use an absolute check (slo:, sql:, http:) until it's on main
-  ✗ new-export: new check failing: export_complete fails on head (5/5 trials) and was never eligible on base
+  ✗ new-export: export_complete is a new check failing on head (5/5 trials); never eligible on base
     nothing on base to compare with; fix the code or the check, both are in this PR
   ✗ double-click: no_double_charge fails intermittently on head (2/10 trials; base 1/10)
     to stop this blocking: fix the flake, remove the check from kazu.yaml (or defaults.off for a built-in), or set blocking: false on the scenario
   ✗ soak: orders_settle fails on head (10/10 trials; base 3/10)
-    to stop this blocking: fix the flake, remove the check from kazu.yaml (or defaults.off for a built-in), or set blocking: false on the scenario
+    to stop this blocking: fix the check or the code, remove the check from kazu.yaml (or defaults.off for a built-in), or set blocking: false on the scenario
 ```
 
 A result downgraded to `warn` by its switch is printed on a `⚠` line and doesn't fail the scenario. So underpowered is `✗` by default and `⚠` only where a switch downgraded it:
 
 ```
+  ⚠ db-blip: latency within 1% is underpowered (underpowered: warn)
+    this run's noise on checkout p99 is ±14% after 12 trial pairs; widen the tolerance, allow more trials or use a quieter runner
   ⚠ rare-errors: fault on payments -> fraud was not exercised (not_exercised: warn)
     the fault drew no request; 1% errors on 240 requests
 ```
@@ -663,9 +665,9 @@ A result downgraded to `warn` by its switch is printed on a `⚠` line and doesn
 A scenario with `blocking: false` is marked on its line and never fails the gate (§4.6); a run with no blocking scenario says so:
 
 ```
-  double-click  (non-blocking)   ✗ no_double_charge fails intermittently on head (2/10 trials; base 1/10)
+  double-click  (non-blocking)   ✗ no_double_charge fails intermittently on head (2/10 trials; base 1/10)  ·  proxy forwarding p99: base 37µs, head 40µs
 
-  no scenario in this run is blocking; it cannot fail the gate
+  no scenario in this run is blocking; no scenario result can fail the gate
 ```
 
 PR comment: same content, condensed, with a pass/fail status check. Every other output (`--json` and the run record, JUnit, Markdown, the PR comment and the status check) carries the non-blocking marker and the result names above.
@@ -760,7 +762,7 @@ Any machine that can run `kazu worker` is a runner.
 
 On K3s, one cluster per runner is reused across trials with a fresh namespace per trial, so cluster boot is paid once per runner, not per trial.
 
-Other limits: the system under test must fit on one runner (bigger systems: stubs or bigger self-hosted runners). Proxy overhead is measured and reported on every run ([ADR-0012](docs/adr/0012-build-our-own-proxy-and-measure-its-overhead.md)): the proxy's own processing, as forwarding overhead per chunk and accept lag per connection (§6.8). Not measured: anything before a read returns, the wait in the kernel's accept queue, the upstream dial, the extra hop itself (paid alike by base and head, and tracked by Kazu's own bench job), and a proxy waiting for a CPU. Per-trial metric stores are small (one trial's series for minutes) and discarded after the run record is written. The backend stores KB–MB per run and is not a scaling risk.
+Other limits: the system under test must fit on one runner (bigger systems: stubs or bigger self-hosted runners). Proxy overhead is measured and reported on every run ([ADR-0012](docs/adr/0012-build-our-own-proxy-and-measure-its-overhead.md)): the proxy's own processing, as forwarding overhead per chunk and accept lag per connection (§6.8). Not measured: anything before a read returns, the wait in the kernel's accept queue, the upstream dial, the extra hop itself (paid alike by base and head, and tracked by Kazu's own bench job), and a proxy waiting for a CPU. Two cases give no sample: a `reset` that cuts a connection before a write gives no forwarding sample for that chunk, and `down` refuses before `Accept`, so a refused connection gives no accept-lag sample. Per-trial metric stores are small (one trial's series for minutes) and discarded after the run record is written. The backend stores KB–MB per run and is not a scaling risk.
 
 ### 6.5 Tech stack
 
