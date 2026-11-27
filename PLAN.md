@@ -238,7 +238,7 @@ Private repo:
 
 ## Phase 10 — Later (DESIGN §8 step 7, unrefined)
 
-Traces as evidence (same receiver, span-structure checks); org registry of standard suites; policy-as-code and waivers with expiry and audit; coverage map; hosted lanes (Firecracker spike first); SSO/SCIM, RBAC, audit export, self-hosted control plane. Refine when Phase 9 is underway.
+Traces as evidence (same receiver, span-structure checks); org registry of standard suites; policy-as-code; coverage map; hosted lanes (Firecracker spike first); SSO/SCIM, RBAC, audit export, self-hosted control plane. Refine when Phase 9 is underway.
 
 ## Post-v1 backlog (faults and features from comparable tools)
 

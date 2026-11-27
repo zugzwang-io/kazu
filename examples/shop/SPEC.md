@@ -199,7 +199,7 @@ Off by default. These exist for the mechanics rows: they test Kazu's own safety 
 | Trap | What it does | What Kazu must do |
 |---|---|---|
 | `SHOP_TRAP_PAYMENTS_BY_IP` | Checkout reaches payments by its static IP instead of the name `payments`, so the hosts-file alias never applies | Report every fault on `checkout -> payments` as **not exercised**, never `pass` |
-| `SHOP_TRAP_SCHEMA_V2` | Adds a `currency` column to `orders`; the safety config has one check that reads it | Report that check as **incompatible with base** when base runs without the flag |
+| `SHOP_TRAP_SCHEMA_V2` | Adds a `currency` column to `orders`; the safety config has one check that reads it | When base runs without the flag, judge that check on head: `pass` when head passes it, labelled **incompatible with base** |
 | `SHOP_TRAP_NO_OTEL` | Services export telemetry nowhere | Report every metric check as **no data**, never `pass` |
 
 ---

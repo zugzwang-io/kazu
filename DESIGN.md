@@ -629,7 +629,7 @@ kazu run  ·  suite pr  ·  base main@9c41e2 vs head a1f3c9  ·  adaptive trials
     reproduce: kazu replay r_2fj9 --trial 2
 ```
 
-Every scenario line shows **proxy forwarding p99** for base and for head ([ADR-0012](docs/adr/0012-build-our-own-proxy-and-measure-its-overhead.md); §6.8): the largest forwarding-overhead p99 among the scenario's edges and trials on that side, over chunks, not requests. With no samples it reads "no data", never 0. It is a maximum over trials, so it grows with the trial count and is not comparable between runs with different trial counts. A `▲` after a number marks a figure above the display threshold (1 ms p99 is ADR-0012's recommendation, for forwarding overhead and accept lag alike); when accept lag is the one over the threshold, the line names it. The marker is an informational heuristic: it never starts a line, is not a result, and changes no result and no exit code.
+Every scenario line shows **proxy forwarding p99** for base and for head ([ADR-0012](docs/adr/0012-build-our-own-proxy-and-measure-its-overhead.md); §6.8): the largest forwarding-overhead p99 among the scenario's edges and trials on that side, over chunks, not requests. With no samples it reads "no data", never 0. It is a maximum over trials, so it grows with the trial count and is not comparable between runs with different trial counts. A `▲` after a number marks a figure above the display threshold, 1 ms p99 for forwarding overhead and for accept lag (a display choice, not a budget); when accept lag is the one over the threshold, the line names it. The marker is an informational heuristic: it never starts a line, is not a result, and changes no result and no exit code.
 
 Every result that fails a scenario is listed on a `✗` line. A fault that never landed, a check whose `requires:` was never met, a metric with no data, a comparison too noisy to decide, a relative check with no baseline, a new check failing, or a check that fails on head while base is mixed looks like this:
 
@@ -719,7 +719,7 @@ Systems that are not containerized, or that depend on externally managed state (
                                 │ outbound HTTPS only (optional) · Connect API
 ┌───────────────────────────────▼──────────────── Control plane (paid, Go) ───────────────────────────────┐
 │ Control-plane API: before a run → policies, consumer invariants, trial-pair leases; after → results     │
-│ Postgres (orgs, repos, runs, baselines, registry, policies, waivers, audit) · object storage (TTL)       │
+│ Postgres (orgs, repos, runs, baselines, registry, policies, audit) · object storage (TTL)                │
 │ Org-wide GitHub App (checks, comments, cross-repo triggers) · web UI · billing · hosted-lane scheduler   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -777,7 +777,7 @@ Other limits: the system under test must fit on one runner (bigger systems: stub
 | Release | GoReleaser (binaries, Homebrew tap, Docker image, GitHub releases, install script); npm per-platform packages; PyPI per-platform wheels; crates.io name claims only |
 | Control plane: HTTP and API | Standard library `net/http` routing; Connect handlers |
 | Control plane: data | Postgres with pgx and sqlc (plain SQL → typed Go); goose migrations; River for background jobs (stored in Postgres, committed in the same transaction as the data) |
-| Control plane: background jobs | GitHub webhook processing, PR comments and checks with retries, Stripe usage reporting, AI calls, sweeps (expired leases, waivers, old runs) |
+| Control plane: background jobs | GitHub webhook processing, PR comments and checks with retries, Stripe usage reporting, AI calls, sweeps (expired leases, old runs) |
 | Web UI | Server-rendered: templ + htmx, ECharts for charts. React + TypeScript (Vite, TanStack Query/Router, no Next.js, embedded with `go:embed`) only when a view needs it, likely the coverage map or run explorer |
 | Integrations | stripe-go, go-github, WorkOS for SSO/SCIM when enterprise needs it |
 | Hosting | Managed platform, one region; managed Postgres; S3 or Cloudflare R2 with lifecycle TTLs; Cloudflare for static assets |
@@ -890,7 +890,7 @@ The target system for every step is `examples/shop` in the public repo (spec: `e
 4. **Easy and everywhere:** K3s driver (rendered manifests, `hostAliases`, crash in place; moved to v1.1 by ADR-0003), OTLP receiver with PromQL `metric:` checks and the no-data check, opt-in language checks, `init`, `doctor`, process faults (built earlier, in PLAN.md's Phase 4), one-line checks (the `sql` one from step 1), TypeScript + Go SDK images, CI templates beyond GitHub, OTLP/S3/webhook sinks.
 5. **Smart parallelism:** coordinator + dynamic workers, adaptive trials, base-image cache, Kubernetes runner.
 6. **Paid v1:** control plane, org-wide GitHub App, consumer contracts, incident → scenario. First web UI (server-rendered).
-7. **Later:** traces as evidence, registry and policy, waivers, coverage map, hosted lanes with snapshot boot, enterprise features.
+7. **Later:** traces as evidence, registry and policy, coverage map, hosted lanes with snapshot boot, enterprise features.
    **Testing Kazu: the e2e gate**
 
 Kazu is a CI gate, so it is gated the same way, on every Kazu PR, by running as a customer would against `examples/shop` and asserting its outputs. Nothing waits for a nightly run.
