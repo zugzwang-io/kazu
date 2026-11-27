@@ -17,7 +17,7 @@ Every bullet from Phase 3 on is **one PR**: small enough to review in one sittin
 | Default checks: setup facts, crashes, exits, traffic exit, landed, no-data; regression defaults on user-facing edges; opt-in language log checks | Traces as evidence → Phase 10 |
 | Checks: Python, TypeScript and Go SDK images with `@after`/`@eventually`; one-line `sql`, `http`, `recovers`, `no_regression`, `slo`, `metric` | Java/Kotlin, Ruby SDKs → community, after v1 |
 | OTLP receiver, per-trial metric store, PromQL | — |
-| Verdict: trial pairs, per-run noise, adaptive trials, underpowered, flaky, false-discovery control | History-informed starting trial count → Phase 8 |
+| Verdict: trial pairs, per-run noise, adaptive trials, underpowered, false-discovery control | History-informed starting trial count → Phase 8 |
 | Static shards + `merge`; GitHub Action; PR comment; JUnit/Markdown/JSON; OTLP/S3/webhook sinks | Coordinator, dynamic workers, Kubernetes runner → Phase 8 (v1.2) |
 | Run records, `replay`, `explain`, `diff`; `init` (+ CI templates for five CIs), `doctor`, `auto_scenarios` | — |
 | GoReleaser: binaries, brew, Docker image, installer; npm + PyPI `kazu-cli`; SDK images on GHCR | Hosted lanes → Phase 10 |
@@ -72,10 +72,10 @@ Proxy (`kazu proxy`, one container per declared edge; tests run against an in-pr
 - [x] #60 config: fault direction (latency, reset, bandwidth), blackhole renamed partition, timeout removed, same-kind overlap rejected
 - [x] #63 design: ADR-0008 folded into DESIGN.md, PLAN.md and SPEC.md
 - [x] #64 ADR-0012 (accepted 2026-11-27): Kazu builds its own proxy (Envoy, nginx and a Toxiproxy fork considered); every run measures the proxy's own forwarding overhead and accept lag, shows proxy forwarding p99 per scenario for base and head and stores both measures with the proxy counters, with no effect on any result; gating is deferred to a later ADR
-- [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in the fault's `direction` (default `response`), seeded; error answers the proxy writes later pass through it
+- [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in the fault's `direction` (default `response`), seeded; error answers the proxy writes later pass through it; forwarding-overhead and accept-lag timing built into the forwarding path from here (ADR-0012), its cost read from the bench job
 - [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`; asserts that `direction` is rejected and that `down` wins over every other fault
-- [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; the per-direction pipeline with the partition's read and write gates and the stage order; applied-fault counters with a direction label for the landed check
-- [ ] proxy 5/5: `kazu.proxy.v1` Protobuf + gRPC control service (load program, start clock, read counters); `buf` set up for the repo (the checks protocol reuses it later)
+- [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; the per-direction pipeline with the partition's read and write gates and the stage order; applied-fault counters with a direction label for the landed check; each stage that delays a chunk on purpose reports when it meant to release it, so forwarding overhead is measured through the pipeline (ADR-0012)
+- [ ] proxy 5/5: `kazu.proxy.v1` Protobuf + gRPC control service (load program, start clock, read counters and the two overhead measures, ADR-0012); `buf` set up for the repo (the checks protocol reuses it later)
 - [ ] image: Dockerfile for the `kazu` image; the driver runs proxies from the image matching its own version (GHCR publishing is Phase 5)
 
 Driver (compose):
@@ -95,12 +95,13 @@ Checks:
 - [ ] checks 1/4: `sql:` one-line check run by the host through `connections:` (no SDK): passes when the query returns no rows; reads only the first few rows, under a statement timeout. On the slice; until the proxy counts requests, the planner rejects `requires: requests`
 - [ ] checks 2/4: `kazu.sdk.v1` Protobuf — `initialize`, `list`, `check`, `result` and the `sql` callback, which caps the rows it returns and fails loudly past the cap; JSON over stdio
 - [ ] checks 3/4: Python `kazu_sdk` (`after`, `run.sql`, `run.sql_value`) and the `kazu-python` image; check files found by extension in mounted folders
-- [ ] checks 4/4: check host — runs the checks container per trial over stdio, answers `sql` through the same connection path; a check that errors on base is **incompatible with base**
+- [ ] checks 4/4: check host — runs the checks container per trial over stdio, answers `sql` through the same connection path; a check that errors on base is **incompatible with base** and judged on head: it passes, so labelled, if head passed it, and fails otherwise (ADR-0013)
 
 Verdict and CLI:
 
 - [x] #66 ADR-0013 (accepted 2026-11-27): a check passes only if head is verifiably no worse than base (head passed every trial, base failed every trial, or a relative comparison within tolerance); a scenario passes only if it ran and every check passed; an unknown is resolved against head; applies from the one-pair verdict; underpowered fails by default, with a scenario `underpowered: warn` override; `flaky` and `gate.flaky` are removed; a scenario `blocking: false` waiver; amends ADR-0011's verdict rules and roll-up
-- [ ] verdict: per scenario, a check that passes on base and fails on head is REGRESSED, a violation on both is a pass; terminal output (§4.8 layout, pass/REGRESSED/not exercised only); `--json` result with per-edge proxy counters and a defined result for a config error (S2 and S3 assert on them)
+- [x] #69 design: ADR-0012 and ADR-0013 folded into DESIGN.md, PLAN.md and SPEC.md; ADR-0011 carries the amendment note
+- [ ] verdict: per scenario, a check that passes on base and fails on head is REGRESSED, a violation on both is a pass; under ADR-0013's rule a check eligible on head only passes if head passed it and is *new check failing* otherwise, a check error is unverifiable for its side, and a pair Kazu failed to run is *trial incomplete*; terminal output (§4.8 layout, with pass, REGRESSED, not exercised, new check failing, check error, incompatible with base and trial incomplete only; proxy forwarding p99 for base and head on every scenario line, with the `▲` marker, changing no result); `--json` result with per-edge proxy counters, the two overhead measures and a defined result for a config error (S2 and S3 assert on them)
 - [ ] cli: `kazu run [scenario] [--suite] --base --head [--seed] [--json]` wired through config → plan → driver → controller → checks → verdict; one shop trial end to end
 
 Shop and the e2e gate:
@@ -119,10 +120,10 @@ Shop and the e2e gate:
 Done when a verdict can be reproduced from its record (`kazu replay`) and the default setup and correctness checks come from container events.
 
 - [ ] seeds: `--seed`, printed and recorded; the `(seed, edge, request number)` PRNG helper every probabilistic fault uses
-- [ ] proxy: HTTP mode — request/response framing, per-request latency histogram, status classes, request counter per edge
+- [ ] proxy: HTTP mode — request/response framing, per-request latency histogram, status classes, request counter per edge; its own timing points for the two overhead measures, and how a request's wait for a pooled upstream connection is counted (ADR-0012)
 - [ ] proxy: `after_requests` triggers on `http` edges, with the runtime guard that mirrors config 5/5
 - [ ] proxy: `errors` (rate, code) fault on HTTP edges
-- [ ] proxy: gRPC mode — HTTP/2 framing, `grpc-status` trailers, `errors` with gRPC codes
+- [ ] proxy: gRPC mode — HTTP/2 framing, `grpc-status` trailers, `errors` with gRPC codes; its own timing points for the two overhead measures (ADR-0012)
 - [ ] proxy: `partition`, `reset`, `bandwidth` — the partition holds both ways and delivers on heal; `reset` draws per request on `http`/`grpc` edges (needs the HTTP mode's request counter) and per connection on `tcp` edges
 - [ ] events: Docker event and exit watcher → default checks: ready, no unexpected crash (signal), no unexpected exit (non-zero, OOM, crash loop), traffic exited 0; one-shot jobs exempt
 - [ ] process faults: `crash` (kill in place, restarted after `for`) and `pause`, recorded as Kazu's own so the crash default excludes them
@@ -131,7 +132,7 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 - [ ] plan: resolve fault anchors (`from`, joins) into times (ADR-0004)
 - [ ] faults on a service: network faults on every declared inbound edge of the service
 - [ ] scenarios: a scenario's `traffic:` override, merged over the default traffic
-- [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan with every image pinned by digest (traffic, checks, each system service on base and head) and the resolved base and head variables + per-trial results + proxy counters + where each trial's Kazu container logs are; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
+- [ ] run record: JSON schema with no product name in it; `.kazu/runs/<id>` with `r_xxxx` ids; plan with every image pinned by digest (traffic, checks, each system service on base and head) and the resolved base and head variables + per-trial results + proxy counters and the two overhead measures in full (count, p50, p99, max; per edge, per trial, base and head) + where each trial's Kazu container logs are; `--json` writes the record; one-line checks get stable ids (see "Frontend sketch")
 - [ ] `kazu replay <run-id> [--trial N]`
 - [ ] shop: `fraud` gRPC service, payments calls it for orders ≥ 1,000 cents (business rule 6), integration tests
 - [ ] shop: full `kazu.yaml` and `checks/shop.py`; scenarios Kazu can't run yet marked skipped in `expectations.yaml`
@@ -143,14 +144,14 @@ Done when a verdict can be reproduced from its record (`kazu replay`) and the de
 
 Done when the shop's rows gate Kazu's PRs through the same GitHub Action a customer uses, and v0.x is public.
 
-- [ ] spike → ADR: the statistical method, validated on the shop's race flag and repeated baselines — test, minimum pairs, budget, default tolerances as policy (DESIGN §8 spike, §10)
+- [ ] spike → ADR: the statistical method, validated on the shop's race flag and repeated baselines — test, minimum pairs, budget, default tolerances as policy (DESIGN §8 spike, §10). Underpowered fails by default (ADR-0013), so the budget and the minimum number of pairs set how often a PR is blocked: the spike reports the underpowered rate on unchanged baselines per measure, with the stopping rule and the two-way pull of the trial count as inputs
   Input from the 2026-10-16 noise spike (branch `spike-noise`; 3 conditions × 20 runs, consecutive base/head pairs on one GitHub runner, no order bias): whole-run p99 with no fault differed by >20% in 1 of 10 identical pairs while p95 stayed within 0.7%, and the recovery window was the noisiest (p90 pair difference 109–507%); latency during a fault is stable (≤0.2%, set by timeouts); unpaid-order rate differed by ~1 pp overall and up to 4 pp during a fault; HTTP error rate stayed 0 throughout a payments outage, because checkout answers 202 pending. Starting points: p95 as the default latency measure, at least 3 pairs with the median of per-pair ratios, comparisons per fault window, an error tolerance wider than 0.5 pp and measured on failed outcomes rather than HTTP status
 - [ ] verdict: trial pairs — same seed, base and head back to back; fixed `gate.trials: N` (adds `gate` to the schema); pair results in the record
-- [ ] verdict: paired comparison with the per-run noise estimate; **underpowered** when the budget can't resolve the tolerance
-- [ ] verdict: adaptive trials (`trials: auto`) — stop early when decided, add pairs while undecided, up to the budget
+- [ ] verdict: paired comparison with the per-run noise estimate; **underpowered** when the budget can't resolve the tolerance, which fails by default; it covers relative measures and eligible-trial counts, while a pass/fail check follows the three proofs and is never underpowered (ADR-0013)
+- [ ] verdict: adaptive trials (`trials: auto`) — stop early when decided, add pairs while undecided, up to the budget; a pass/fail check is never undecided, so trials stop at the minimum unless a relative measure or an eligibility count is still undecided, and pairs stop being added for a check once the minimum shows *no baseline* or *new check failing* (ADR-0013)
 - [ ] checks: `no_regression`, `slo`, `recovers` one-line checks over proxy measures (`p50/p90/p95/p99/error_rate`)
 - [ ] defaults: regression defaults (`latency_within`, `error_rate_within`, `recovers_within`) on user-facing edges; `defaults.off` (adds `defaults` to the schema); a recovery window cut short by the end of traffic is *not exercised*, never a pass (ADR-0006)
-- [ ] verdict: flaky classification; `gate.fail_on`, `gate.flaky`, `gate.not_exercised`, `gate.no_data`, `gate.underpowered` honoured end to end
+- [ ] verdict: `gate.fail_on`, `gate.not_exercised`, `gate.no_data`, `gate.underpowered` (default `fail`) honoured end to end, with the scenario `underpowered: warn | fail` switch, *no baseline*, *fails on head* and *fails intermittently on head*, and the roll-up (a scenario fails on any result at `fail` severity); `scenarios.<name>.blocking` and the run outcome it sets, marked in every output; these keys join the schema here (ADR-0013)
 - [ ] verdict: false-discovery control across many scenarios and checks
 - [ ] output: `--junit` and `--markdown` sinks from the record
 - [ ] shards: `--shard i/N` (deterministic partition of trial pairs) and `kazu merge <results…>`
@@ -160,8 +161,8 @@ Done when the shop's rows gate Kazu's PRs through the same GitHub Action a custo
 - [ ] e2e gate switches to the Action, sharded across ~10 jobs, same ~10-minute budget as a customer's gate
 - [ ] shop: `NO_DEADLINE_PROPAGATION` and `SHARED_POOL` flags with bug proofs; rows V3, V6
 - [ ] shop: `RACE_P` and `NO_SHEDDING` flags with bug proofs; rows V9, V10
-- [ ] shop: rows S4–S6 (regression not violation, flaky, statistical power) in `safety/`
-- [ ] shop: `SCHEMA_V2` trap; rows S7 (20 repeats as 20 shards), S8, S9
+- [ ] shop: rows S4–S6 (regression not violation; fails intermittently on head, at a fixed 14 pairs with the redesigned race flag's rate set here; statistical power, with S6 redesigned here on a relative check) in `safety/`
+- [ ] shop: `SCHEMA_V2` trap; rows S7 (20 repeats as 20 shards; an underpowered `no_regression` counts as a miss), S8 (fails as underpowered), S9 (passes on head, labelled incompatible with base)
 - [ ] docs: GitHub Pages at `zugzwang-io.github.io/kazu` — install, quickstart on the shop, reference, schema served at its `$id`
 - [ ] launch: README rewrite, the Phase 0 pre-public pass, package claims (`kazu-cli` on npm and PyPI, placeholders on crates.io), trademark check, v0.x tag
 - [ ] launch: the schema holds only what Kazu implements; anything still unbuilt leaves `kazu.schema.json` before the v0.x tag (ADR-0002, decision 12)
@@ -171,7 +172,7 @@ Done when the shop's rows gate Kazu's PRs through the same GitHub Action a custo
 Done when Priya's Day 0 and Day 1 (DESIGN §3) work as written: `init`, `doctor`, a verdict from defaults alone, metric checks over her existing telemetry, three SDK languages.
 
 - [ ] telemetry 1/4: OTLP receiver (gRPC and HTTP) as a service in the trial network; `OTEL_EXPORTER_OTLP_ENDPOINT` set on every service, or `telemetry.collector` aliased to it (adds `telemetry` to the schema)
-- [ ] telemetry 2/4: OTLP → Prometheus naming and a per-trial in-memory TSDB; proxy counters written to the same store (ADR for the name mapping, DESIGN §10)
+- [ ] telemetry 2/4: OTLP → Prometheus naming and a per-trial in-memory TSDB; proxy counters and the two overhead measures written to the same store (ADR for the name mapping, DESIGN §10)
 - [ ] telemetry 3/4: PromQL engine; `metric:` check with `max`/`min`/`within`; **no data** result and `no_data: warn`
 - [ ] telemetry 4/4: `run.metrics()` SDK callback
 - [ ] defaults: opt-in language log checks (`defaults.languages`: go, java, rust)
@@ -229,7 +230,7 @@ Private repo:
 - [ ] control plane skeleton: Postgres (pgx, sqlc, goose), River jobs, Connect handlers, orgs/repos/runs
 - [ ] org-wide GitHub App: install flow, checks and comments, cross-repo triggers
 - [ ] web UI: run explorer (templ + htmx) — the "Run" screen in the frontend sketch
-- [ ] web UI: repo overview — scenario × commit history, flake quarantine, ownership routing
+- [ ] web UI: repo overview — scenario × commit history, ownership routing
 - [ ] consumer resilience contracts: consumer registry, provider PRs run consumers' invariants, the "Contracts" screen
 - [ ] billing: Stripe, Pro tier, metering for AI calls
 - [ ] AI: incident → scenario draft
@@ -237,7 +238,7 @@ Private repo:
 
 ## Phase 10 — Later (DESIGN §8 step 7, unrefined)
 
-Traces as evidence (same receiver, span-structure checks); org registry of standard suites; policy-as-code and waivers with expiry and audit; coverage map; hosted lanes (Firecracker spike first); SSO/SCIM, RBAC, audit export, self-hosted control plane. Refine when Phase 9 is underway.
+Traces as evidence (same receiver, span-structure checks); org registry of standard suites; policy-as-code; coverage map; hosted lanes (Firecracker spike first); SSO/SCIM, RBAC, audit export, self-hosted control plane. Refine when Phase 9 is underway.
 
 ## Post-v1 backlog (faults and features from comparable tools)
 
@@ -294,7 +295,7 @@ Five screens on one canvas: [Kazu platform screens](https://claude.ai/artifact/2
 | Terminal: `kazu run` and `kazu doctor` output | free, CLI | 3–6 |
 | PR comment with status check | free, GitHub Action | 5 |
 | Run explorer: one run, scenarios, trial pairs, fault timeline, noise, reproduce | paid web UI | 9 |
-| Repo overview: scenario × commit history, flake quarantine, coverage | paid web UI | 9 |
+| Repo overview: scenario × commit history, coverage | paid web UI | 9 |
 | Contracts: provider → consumers, whose invariants run on whose PRs | paid web UI | 9 |
 
 What working backwards from the screens changed or confirmed:
