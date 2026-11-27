@@ -77,7 +77,11 @@ func (v *validator) scenario(s Scenario, taken map[string]bool) {
 	for i := range s.Faults {
 		v.fault(append(slices.Clone(path), "faults", strconv.Itoa(i)), &s.Faults[i])
 	}
-	v.anchors(path, s.Faults)
+	before := len(v.ps.list)
+	byName := v.anchors(path, s.Faults)
+	if len(v.ps.list) == before {
+		v.overlaps(path, s.Faults, byName)
+	}
 	v.checks(append(slices.Clone(path), "checks"), s.Checks, taken)
 }
 
@@ -121,9 +125,6 @@ func (v *validator) fault(path []string, ft *Fault) {
 	if f["limit"] != nil && ft.Limit <= 0 {
 		v.ps.add(at("limit"), "must be above zero; use down to stop traffic entirely")
 	}
-	if f["restart_after"] != nil {
-		v.positive(at("restart_after"), ft.RestartAfter)
-	}
 	if f["code"] != nil && known && edge.Protocol.RequestLevel() {
 		code, problem := statusCode(edge.Protocol, ft.Code)
 		if problem != "" {
@@ -133,9 +134,6 @@ func (v *validator) fault(path []string, ft *Fault) {
 	}
 
 	if f["for"] != nil {
-		if ft.Kind == Crash {
-			v.ps.add(at("for"), "a crash is instant; restart_after sets how long the service stays down")
-		}
 		v.positive(at("for"), ft.For)
 	}
 	if f["after_requests"] != nil && known {
@@ -144,8 +142,9 @@ func (v *validator) fault(path []string, ft *Fault) {
 }
 
 // anchors checks what each fault's from names: a fault in the same
-// scenario, not itself, with an end if its end is used, and no loops.
-func (v *validator) anchors(path []string, faults []Fault) {
+// scenario, not itself, with an end if its end is used, and no loops. It
+// returns each named fault's index.
+func (v *validator) anchors(path []string, faults []Fault) map[string]int {
 	at := func(i int, keys ...string) []string {
 		return append(append(slices.Clone(path), "faults", strconv.Itoa(i)), keys...)
 	}
@@ -180,8 +179,6 @@ func (v *validator) anchors(path []string, faults []Fault) {
 				v.ps.add(apath, "a fault can't count from itself")
 			case a.Start:
 				next[i] = append(next[i], k)
-			case faults[k].Kind == Crash:
-				v.ps.add(apath, fmt.Sprintf("a crash is instant, so %s has no end; count from { start: %s }", a.Fault, a.Fault))
 			case v.node(at(k, "for")...) == nil:
 				v.ps.add(apath, fmt.Sprintf("%s has no for, so it lasts until traffic ends; give it a for, or count from { start: %s }", a.Fault, a.Fault))
 			default:
@@ -197,6 +194,7 @@ func (v *validator) anchors(path []string, faults []Fault) {
 		chain = append(chain, chain[0])
 		v.ps.add(at(loop[0], "from"), "faults count from each other in a loop: "+strings.Join(chain, " -> "))
 	}
+	return byName
 }
 
 // loops returns the cycles a depth-first walk of next finds (at least one

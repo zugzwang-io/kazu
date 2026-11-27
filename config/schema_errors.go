@@ -37,7 +37,7 @@ func schemaProblems(ps *problems, ve *jsonschema.ValidationError) {
 	case *kind.AdditionalProperties:
 		allowed := schemaProperties(ve.SchemaURL)
 		for _, p := range k.Properties {
-			ps.addKey(append(slices.Clone(path), p), fmt.Sprintf("unknown key %q", p)+suggest(p, allowed))
+			ps.addKey(append(slices.Clone(path), p), fmt.Sprintf("unknown key %q", p)+hint(p, allowed))
 		}
 	default:
 		if len(ve.Causes) > 0 {
@@ -72,7 +72,11 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 			want[i] = fmt.Sprint(w)
 		}
 		got := fmt.Sprint(k.Got)
-		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + suggest(got, want)
+		h := hint(got, want)
+		if why, ok := oneWay[faultKindAt(root, path)]; ok && got == "both" && path[len(path)-1] == "direction" {
+			h = " (" + why + ")"
+		}
+		return fmt.Sprintf("%q is not one of %s", got, quoteList(want)) + h
 	case *kind.Const:
 		return fmt.Sprintf("%q is not allowed here; the only text value is %q", fmt.Sprint(k.Got), fmt.Sprint(k.Want))
 	case *kind.Pattern:
@@ -95,6 +99,39 @@ func leafMessage(root *yaml.Node, ve *jsonschema.ValidationError) string {
 	}
 }
 
+// replaced are keys and values Kazu once took, each with the one that does
+// its job now.
+var replaced = map[string]struct{ now, why string }{
+	"blackhole":     {"partition", "it holds traffic both ways and delivers it when the window ends"},
+	"restart_after": {"for", "a crash stays down for its for, then Kazu restarts it"},
+	"timeout":       {"latency", "a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet"},
+}
+
+// hint is suggest's " (did you mean ...?)" for s, or the replacement when s
+// is a name Kazu once took and its replacement is a candidate.
+func hint(s string, candidates []string) string {
+	if r, ok := replaced[s]; ok && slices.Contains(candidates, r.now) {
+		return fmt.Sprintf(" (did you mean %q? %s)", r.now, r.why)
+	}
+	return suggest(s, candidates)
+}
+
+// oneWay explains, per kind, why its direction can't be both.
+var oneWay = map[string]string{
+	"latency": "latency acts in one direction; to slow both streams use bandwidth",
+	"reset":   "reset acts in one direction",
+}
+
+// faultKindAt returns the kind of the fault whose field is at path, or "".
+func faultKindAt(root *yaml.Node, path []string) string {
+	if parent := lookup(root, path[:len(path)-1], false); parent != nil {
+		if f := child(parent, "fault"); f != nil {
+			return f.Value
+		}
+	}
+	return ""
+}
+
 // falseSchemaMessage explains a key the schema forbids in this particular
 // object: a field of another fault kind, or a bound that excludes another.
 func falseSchemaMessage(root *yaml.Node, path []string, schemaURL string) string {
@@ -102,10 +139,8 @@ func falseSchemaMessage(root *yaml.Node, path []string, schemaURL string) string
 	if m := dependentSchema.FindStringSubmatch(schemaURL); m != nil {
 		return fmt.Sprintf("%q can't go with %q", key, m[1])
 	}
-	if parent := lookup(root, path[:len(path)-1], false); parent != nil {
-		if f := child(parent, "fault"); f != nil {
-			return fmt.Sprintf("%q is not a field of a %s fault", key, f.Value)
-		}
+	if kind := faultKindAt(root, path); kind != "" {
+		return fmt.Sprintf("%q is not a field of a %s fault", key, kind)
 	}
 	return fmt.Sprintf("%q is not allowed here", key)
 }

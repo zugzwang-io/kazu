@@ -28,7 +28,7 @@ scenarios:
       - { service: postgres, fault: down, after: 20s, for: 15s }
   payments-dies-midflight:
     faults:
-      - { service: payments, fault: crash, after_requests: 200, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 200, for: 5s }
   double-click:
     env: { traffic: { DOUBLE_SUBMIT: "1" } }
   browse-under-outage:
@@ -39,7 +39,7 @@ scenarios:
     traffic: { command: [run, /load/soak.js] }
     env: { traffic: { DURATION: 180s } }
     faults:
-      - { service: payments, fault: crash, after_requests: 500, restart_after: 5s }
+      - { service: payments, fault: crash, after_requests: 500, for: 5s }
   rare-errors:
     not_exercised: warn
     faults:
@@ -52,6 +52,15 @@ scenarios:
       - { edge: traffic -> checkout, fault: latency, delay: 50ms, from: [db-down, { start: slow-pay }], after: 5s }
     checks:
       - recovers: { service: checkout, within: 30s }
+  late-requests:
+    faults:
+      - { edge: checkout -> payments, fault: latency, delay: 1500ms, direction: request, after: 20s, for: 30s }
+  lost-answers:
+    faults:
+      - { edge: checkout -> payments, fault: reset, rate: 5%, direction: response, after: 20s, for: 30s }
+  fraud-split:
+    faults:
+      - { edge: payments -> fraud, fault: partition, after: 20s, for: 10s }
 
 checks:
   - image: ghcr.io/zugzwang-io/kazu-python:1

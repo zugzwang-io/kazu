@@ -33,7 +33,31 @@ func TestProblems(t *testing.T) {
 			`13:66: scenarios.a.faults[0].dealy: unknown key "dealy" (did you mean "delay"?)`,
 		}},
 		{"unknown fault kind", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latncy, delay: 1s }\n", []string{
-			`13:46: scenarios.a.faults[0].fault: "latncy" is not one of "latency", "down", "blackhole", "reset", "bandwidth", "errors", "timeout", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "latency"?)`,
+			`13:46: scenarios.a.faults[0].fault: "latncy" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "latency"?)`,
+		}},
+		{"blackhole, renamed", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: blackhole }\n", []string{
+			`13:46: scenarios.a.faults[0].fault: "blackhole" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "partition"? it holds traffic both ways and delivers it when the window ends)`,
+		}},
+		{"timeout, dropped", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: timeout, rate: 5% }\n", []string{
+			`13:46: scenarios.a.faults[0].fault: "timeout" is not one of "latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full" (did you mean "latency"? a delay longer than the caller's timeout makes it give up; latency applies to every request, a rate on it isn't supported yet)`,
+		}},
+		{"restart_after, now for", "scenarios:\n  a:\n    faults:\n      - { service: payments, fault: crash, restart_after: 5s }\n", []string{
+			`13:44: scenarios.a.faults[0].restart_after: unknown key "restart_after" (did you mean "for"? a crash stays down for its for, then Kazu restarts it)`,
+		}},
+		{"latency both ways", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 1s, direction: both }\n", []string{
+			`13:77: scenarios.a.faults[0].direction: "both" is not one of "request", "response" (latency acts in one direction; to slow both streams use bandwidth)`,
+		}},
+		{"reset both ways", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: reset, rate: 5%, direction: both }\n", []string{
+			`13:74: scenarios.a.faults[0].direction: "both" is not one of "request", "response" (reset acts in one direction)`,
+		}},
+		{"latency in an unknown direction", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: latency, delay: 1s, direction: upstream }\n", []string{
+			`13:77: scenarios.a.faults[0].direction: "upstream" is not one of "request", "response"`,
+		}},
+		{"a former fault kind elsewhere gets no fault hint", "scenarios: { a: { not_exercised: timeout } }\n", []string{
+			`10:34: scenarios.a.not_exercised: "timeout" is not one of "fail", "warn"`,
+		}},
+		{"direction on a kind without one", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, fault: partition, direction: request }\n", []string{
+			`13:68: scenarios.a.faults[0].direction: "direction" is not a field of a partition fault`,
 		}},
 		{"fault without a kind", "scenarios:\n  a:\n    faults:\n      - { edge: checkout -> payments, after: 20s }\n", []string{
 			`13:9: scenarios.a.faults[0]: missing key "fault"`,

@@ -174,7 +174,10 @@
         "edge": { "$ref": "#/$defs/edgeName" },
         "service": { "$ref": "#/$defs/name" },
         "fault": {
-          "enum": ["latency", "down", "blackhole", "reset", "bandwidth", "errors", "timeout", "crash", "pause", "cpu", "memory", "disk_full"]
+          "enum": ["latency", "down", "partition", "reset", "bandwidth", "errors", "crash", "pause", "cpu", "memory", "disk_full"]
+        },
+        "direction": {
+          "description": "Which bytes a latency, reset or bandwidth fault acts on: request (what the caller sends) or response (what the callee sends back); bandwidth also takes both. latency defaults to response, reset to request, bandwidth to both."
         },
         "delay": { "$ref": "#/$defs/duration" },
         "jitter": { "$ref": "#/$defs/duration" },
@@ -186,7 +189,6 @@
         },
         "limit": { "$ref": "#/$defs/bandwidth" },
         "load": { "$ref": "#/$defs/share" },
-        "restart_after": { "$ref": "#/$defs/duration" },
         "after": { "$ref": "#/$defs/duration" },
         "after_requests": { "type": "integer", "minimum": 1 },
         "from": {
@@ -209,38 +211,38 @@
       "allOf": [
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "latency" } } },
-          "then": { "required": ["delay"], "properties": { "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "required": ["delay"], "properties": { "direction": { "enum": ["request", "response"] }, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
-          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["down", "blackhole"] } } },
-          "then": { "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["down", "partition"] } } },
+          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
-          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["reset", "timeout"] } } },
-          "then": { "required": ["rate"], "properties": { "delay": false, "jitter": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "if": { "required": ["fault"], "properties": { "fault": { "const": "reset" } } },
+          "then": { "required": ["rate"], "properties": { "direction": { "enum": ["request", "response"] }, "delay": false, "jitter": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "bandwidth" } } },
-          "then": { "required": ["limit"], "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "load": false, "restart_after": false } }
+          "then": { "required": ["limit"], "properties": { "direction": { "enum": ["request", "response", "both"] }, "delay": false, "jitter": false, "rate": false, "code": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "errors" } } },
-          "then": { "required": ["rate", "code"], "properties": { "delay": false, "jitter": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "required": ["rate", "code"], "properties": { "direction": false, "delay": false, "jitter": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "const": "crash" } } },
-          "then": { "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
+          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "enum": ["pause", "disk_full"] } } },
-          "then": { "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false, "restart_after": false } }
+          "then": { "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "load": false } }
         },
         {
           "if": { "required": ["fault"], "properties": { "fault": { "enum": ["cpu", "memory"] } } },
-          "then": { "required": ["load"], "properties": { "delay": false, "jitter": false, "rate": false, "code": false, "limit": false, "restart_after": false } }
+          "then": { "required": ["load"], "properties": { "direction": false, "delay": false, "jitter": false, "rate": false, "code": false, "limit": false } }
         },
         {
-          "if": { "required": ["fault"], "properties": { "fault": { "enum": ["errors", "timeout"] } } },
+          "if": { "required": ["fault"], "properties": { "fault": { "const": "errors" } } },
           "then": { "properties": { "service": false } }
         },
         {

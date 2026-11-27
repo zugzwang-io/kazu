@@ -69,6 +69,7 @@ Proxy (`kazu proxy`, one container per declared edge; tests run against an in-pr
 - [x] #41 proxy 1/5: TCP forwarder with live connection and byte counters; `kazu proxy` subcommand
 - [x] #48 proxy bench: direct vs proxied throughput, round-trip and connect benchmarks; advisory base-vs-head CI job
 - [x] #52 ADR-0008 (accepted 2026-11-26): network faults have a direction; `blackhole` becomes `partition`; `timeout` is dropped
+- [x] #60 config: fault direction (latency, reset, bandwidth), blackhole renamed partition, timeout removed, same-kind overlap rejected
 - [ ] proxy 2/5: `latency` fault — delay plus jitter per chunk in both directions, seeded; records the open latency decision in SPEC.md
 - [ ] proxy 3/5: `down` fault — refuses new connections (ECONNREFUSED, never accept-then-close) and resets live ones for its window, so pooled connections don't ride through; echo-server tests assert both errnos, because the shop maps refused to `failed` and reset to `pending`
 - [ ] proxy 4/5: fault program — `after`/`for` on a clock the controller starts; applied-fault counters for the landed check

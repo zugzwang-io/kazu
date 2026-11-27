@@ -119,6 +119,10 @@ func (d *decoder) fault(n *yaml.Node) Fault {
 	if v := f["service"]; v != nil {
 		ft.Service = v.Value
 	}
+	ft.Direction = defaultDirection[ft.Kind]
+	if v := f["direction"]; v != nil {
+		ft.Direction = Direction(v.Value)
+	}
 	if v := f["delay"]; v != nil {
 		ft.Delay = d.duration(v)
 	}
@@ -137,9 +141,6 @@ func (d *decoder) fault(n *yaml.Node) Fault {
 	if v := f["load"]; v != nil {
 		ft.Load = d.percent(v)
 	}
-	if v := f["restart_after"]; v != nil {
-		ft.RestartAfter = d.duration(v)
-	}
 	if v := f["after"]; v != nil {
 		ft.After = d.duration(v)
 	}
@@ -153,6 +154,14 @@ func (d *decoder) fault(n *yaml.Node) Fault {
 		ft.For = d.duration(v)
 	}
 	return ft
+}
+
+// defaultDirection is the direction of each kind that takes one, when the
+// file doesn't say.
+var defaultDirection = map[FaultKind]Direction{
+	Latency:   ResponseDirection,
+	Reset:     RequestDirection,
+	Bandwidth: BothDirections,
 }
 
 // anchors reads from: one anchor, or a list of them.
